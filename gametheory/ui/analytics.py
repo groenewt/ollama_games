@@ -46,12 +46,24 @@ class AnalyticsPanelBuilder:
                     value=f"{cumulative.get('avg_response_time', 0):.2f}s",
                 ),
                 mo.stat(
+                    label="Min Response",
+                    value=f"{cumulative.get('min_response_time', 0):.2f}s",
+                ),
+                mo.stat(
+                    label="Max Response",
+                    value=f"{cumulative.get('max_response_time', 0):.2f}s",
+                ),
+                mo.stat(
                     label="Failed Calls",
                     value=str(cumulative.get("failed_requests", 0)),
                 ),
                 mo.stat(
                     label="Sessions",
                     value=str(cumulative.get("sessions_count", 0)),
+                ),
+                mo.stat(
+                    label="Req/Sec",
+                    value=f"{cumulative.get('requests_per_second', 0):.2f}",
                 ),
             ], justify="start"),
             mo.md(f"**Models Tested:** {', '.join(cumulative.get('models_tested', [])) or 'None'}"),

@@ -125,6 +125,44 @@ def _(mo):
 
 
 @app.cell
+def _(mo):
+    def format_prompt_log(prompt_entries):
+        """Format prompt log showing full prompts and responses."""
+        if not prompt_entries:
+            return mo.md("_No prompts yet. Run a game series to see prompts._")
+
+        sections = []
+        for entry in prompt_entries[-50:]:  # Last 50 prompt exchanges
+            round_num = entry.get("round", "?")
+            player = entry.get("player", "?")
+            model = entry.get("model", "unknown")
+            prompt = entry.get("prompt", "")
+            response = entry.get("response", "")
+
+            section = f"""
+<details style="margin-bottom: 8px; background: #1a1a2e; padding: 8px; border-radius: 4px;">
+<summary style="cursor: pointer; color: #69db7c; font-family: monospace;">
+Round {round_num} | P{player} ({model})
+</summary>
+<div style="margin-top: 8px;">
+<div style="color: #868e96; font-size: 11px; margin-bottom: 4px;">PROMPT:</div>
+<pre style="background: #0d0d1a; color: #eee; padding: 8px; font-size: 11px; white-space: pre-wrap; border-radius: 4px; margin: 0 0 8px 0;">{prompt}</pre>
+<div style="color: #868e96; font-size: 11px; margin-bottom: 4px;">RESPONSE:</div>
+<pre style="background: #0d0d1a; color: #69db7c; padding: 8px; font-size: 11px; white-space: pre-wrap; border-radius: 4px; margin: 0;">{response}</pre>
+</div>
+</details>"""
+            sections.append(section)
+
+        return mo.Html(f"""
+            <div style="max-height: 400px; overflow-y: auto;">
+                {"".join(sections)}
+            </div>
+        """)
+
+    return (format_prompt_log,)
+
+
+@app.cell
 def _(OLLAMA_ENDPOINTS, OLLAMA_MODELS, get_game_names, mo):
     # Global UI Elements
     game_names = get_game_names()
@@ -526,6 +564,7 @@ def _(
     endpoint_p1,
     endpoint_p2,
     format_activity_log,
+    format_prompt_log,
     game_type_selector,
     metrics,
     mo,
@@ -547,8 +586,9 @@ def _(
     # Game execution cell
     mo.stop(not run_button.value)
 
-    # Clear and initialize activity log
+    # Clear and initialize logs
     activity_log.clear()
+    prompt_log = []  # Store prompts separately
     activity_log.append({
         "timestamp": datetime.now().isoformat(),
         "level": "INFO",
@@ -654,7 +694,23 @@ def _(
                 title="Running Games",
                 subtitle=f"{model_p1.value} vs {model_p2.value}",
             ):
-                actions, payoffs, response_times = await runner.play_round(aio_session, players, history)
+                actions, payoffs, response_times, prompts, raw_responses = await runner.play_round(aio_session, players, history)
+
+                # Store prompts for Prompt Log display
+                prompt_log.append({
+                    "round": round_num + 1,
+                    "player": 1,
+                    "model": model_p1.value,
+                    "prompt": prompts[0],
+                    "response": raw_responses[0],
+                })
+                prompt_log.append({
+                    "round": round_num + 1,
+                    "player": 2,
+                    "model": model_p2.value,
+                    "prompt": prompts[1],
+                    "response": raw_responses[1],
+                })
 
                 # Log round results with request-level detail
                 activity_log.append({
@@ -770,6 +826,10 @@ def _(
         # Activity Log - always visible (not in accordion)
         mo.md("### Activity Log"),
         format_activity_log(activity_log),
+        mo.md("---"),
+        # Prompt Log - separate section showing full prompts/responses
+        mo.md("### Prompt Log"),
+        format_prompt_log(prompt_log),
         # Game Log in accordion
         mo.accordion({
             "Game Log": results_df

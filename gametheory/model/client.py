@@ -71,7 +71,7 @@ What is your choice for this round? Respond with only one word from the availabl
         game: GameDefinition,
         history: List[Tuple[str, ...]],
         timeout: float = DEFAULT_TIMEOUT,
-    ) -> Tuple[str, float]:
+    ) -> Tuple[str, float, str, str]:
         """Query model for action decision.
 
         Args:
@@ -82,7 +82,7 @@ What is your choice for this round? Respond with only one word from the availabl
             timeout: Request timeout in seconds.
 
         Returns:
-            Tuple of (action string, response time in seconds).
+            Tuple of (action, response_time, prompt, raw_response).
         """
         prompt = self._build_prompt(game, history, player.player_id)
         start_time = time.time()
@@ -125,7 +125,7 @@ What is your choice for this round? Respond with only one word from the availabl
                         player_id=player.player_id,
                         response=response_text,
                     )
-                    return action, response_time
+                    return action, response_time, prompt, response_text
                 else:
                     error_text = await response.text()
                     self.metrics.log_error(
@@ -136,7 +136,7 @@ What is your choice for this round? Respond with only one word from the availabl
                         error_type=f"error_{response.status}",
                         error_message=error_text,
                     )
-                    return game.actions[0], response_time
+                    return game.actions[0], response_time, prompt, f"[ERROR {response.status}] {error_text}"
 
         except asyncio.TimeoutError:
             response_time = time.time() - start_time
@@ -148,7 +148,7 @@ What is your choice for this round? Respond with only one word from the availabl
                 error_type="timeout",
                 error_message="Request timed out",
             )
-            return game.actions[0], response_time
+            return game.actions[0], response_time, prompt, "[TIMEOUT]"
 
         except Exception as e:
             response_time = time.time() - start_time
@@ -160,7 +160,7 @@ What is your choice for this round? Respond with only one word from the availabl
                 error_type="exception",
                 error_message=str(e),
             )
-            return game.actions[0], response_time
+            return game.actions[0], response_time, prompt, f"[EXCEPTION] {str(e)}"
 
 
 class GameRunner:
@@ -182,7 +182,7 @@ class GameRunner:
         session: aiohttp.ClientSession,
         players: List[PlayerConfig],
         history: List[Tuple[str, ...]],
-    ) -> Tuple[Tuple[str, ...], Tuple[int, ...], Tuple[float, ...]]:
+    ) -> Tuple[Tuple[str, ...], Tuple[int, ...], Tuple[float, ...], Tuple[str, ...], Tuple[str, ...]]:
         """Play a single round of the game.
 
         Args:
@@ -191,7 +191,7 @@ class GameRunner:
             history: List of previous round actions.
 
         Returns:
-            Tuple of (actions, payoffs, response_times).
+            Tuple of (actions, payoffs, response_times, prompts, raw_responses).
         """
         # Get actions from all players concurrently
         tasks = [
@@ -200,14 +200,16 @@ class GameRunner:
         ]
         results = await asyncio.gather(*tasks)
 
-        # Unpack actions and response times
+        # Unpack actions, response times, prompts, and raw responses
         actions = tuple(r[0] for r in results)
         response_times = tuple(r[1] for r in results)
+        prompts = tuple(r[2] for r in results)
+        raw_responses = tuple(r[3] for r in results)
 
         # Calculate payoffs
         payoffs = self.game.payoff_matrix.get(actions, tuple(0 for _ in players))
 
-        return actions, payoffs, response_times
+        return actions, payoffs, response_times, prompts, raw_responses
 
     async def run_series(
         self,
