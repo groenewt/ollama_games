@@ -237,6 +237,13 @@ def _(OLLAMA_ENDPOINTS, OLLAMA_MODELS, get_game_names, mo):
     top_p_p3 = mo.ui.slider(0.0, 1.0, value=0.9, step=0.05, label="Top P")
     system_p3 = mo.ui.text_area(label="System Prompt", placeholder="Optional: Custom instructions for this player...")
 
+    # Payoff display in prompt toggle
+    payoff_display = mo.ui.dropdown(
+        options={"Full Matrix": "full", "Player Only": "player", "None": "none"},
+        label="Payoff Info in Prompt",
+        value="Full Matrix",
+    )
+
     # Run button
     run_button = mo.ui.run_button(label="Run Game Series")
 
@@ -250,6 +257,7 @@ def _(OLLAMA_ENDPOINTS, OLLAMA_MODELS, get_game_names, mo):
         model_p2,
         model_p3,
         num_games,
+        payoff_display,
         run_button,
         runtime_selector,
         temp_p1,
@@ -284,6 +292,7 @@ def _(
     model_p2,
     model_p3,
     num_games,
+    payoff_display,
     run_button,
     runtime_selector,
     temp_p1,
@@ -326,7 +335,7 @@ def _(
 
         rows = [
             mo.md("## Configuration"),
-            mo.hstack([game_type_selector, runtime_selector]),
+            mo.hstack([game_type_selector, runtime_selector, payoff_display]),
             num_games,
             mo.md("### Players"),
             player1_section,
@@ -571,8 +580,10 @@ def _(
     model_p1,
     model_p2,
     num_games,
+    payoff_display,
     pl,
     run_button,
+    runtime_selector,
     session_custom_payoffs,
     session_manager,
     temp_p1,
@@ -684,6 +695,10 @@ def _(
     async def run_with_progress():
         results = []
         history = []
+        history_payoffs = []  # Track payoffs from each round
+        cumulative_payoffs = [0, 0]  # Running total for each player
+        # One-off mode: each game is independent (no history)
+        is_repeated = runtime_selector.value in ("repeated", "sequential")
         metrics.log_request_start(num_games.value * 2)
 
         import aiohttp
@@ -694,7 +709,15 @@ def _(
                 title="Running Games",
                 subtitle=f"{model_p1.value} vs {model_p2.value}",
             ):
-                actions, payoffs, response_times, prompts, raw_responses = await runner.play_round(aio_session, players, history)
+                # For one-off mode, don't pass history to prompt
+                actions, payoffs, response_times, prompts, raw_responses = await runner.play_round(
+                    aio_session, players,
+                    history if is_repeated else [],
+                    payoff_display=payoff_display.value,
+                    history_payoffs=history_payoffs if is_repeated else None,
+                    cumulative_payoffs=tuple(cumulative_payoffs) if is_repeated else None,
+                    is_repeated=is_repeated,
+                )
 
                 # Store prompts for Prompt Log display
                 prompt_log.append({
@@ -744,6 +767,9 @@ def _(
                 }
                 results.append(result)
                 history.append(actions)
+                history_payoffs.append(payoffs)
+                cumulative_payoffs[0] += payoffs[0]
+                cumulative_payoffs[1] += payoffs[1]
 
         return results
 

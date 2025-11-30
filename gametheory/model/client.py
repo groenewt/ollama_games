@@ -26,6 +26,10 @@ class OllamaClient:
         game: GameDefinition,
         history: List[Tuple[str, ...]],
         player_id: int,
+        payoff_display: str = "full",
+        history_payoffs: Optional[List[Tuple[int, ...]]] = None,
+        cumulative_payoffs: Optional[Tuple[int, ...]] = None,
+        is_repeated: bool = True,
     ) -> str:
         """Generate contextual prompt for the game.
 
@@ -33,36 +37,89 @@ class OllamaClient:
             game: The game definition.
             history: List of previous round actions.
             player_id: The player's ID (1-indexed).
+            payoff_display: "full" (all payoffs), "player" (player's only), "none".
+            history_payoffs: List of payoff tuples from previous rounds.
+            cumulative_payoffs: Running total of payoffs per player.
+            is_repeated: True for repeated/sequential games, False for one-off.
 
         Returns:
             The formatted prompt string.
         """
-        # Format history for context
-        if history:
-            if game.num_players == 2:
-                history_str = "\n".join([
-                    f"Round {i+1}: Player 1 chose {actions[0]}, Player 2 chose {actions[1]}"
-                    for i, actions in enumerate(history)
-                ])
+        game_type = "repeated" if is_repeated else "one-shot"
+        sections = [f"You are playing a {game_type} {game.name} game."]
+
+        # Build payoff matrix section
+        if payoff_display != "none" and game.num_players == 2:
+            payoff_lines = []
+            if payoff_display == "full":
+                payoff_lines.append("\nPayoff Matrix (Your payoff, Opponent's payoff):")
+                for action_combo, payoffs in game.payoff_matrix.items():
+                    if player_id == 1:
+                        your_action, opp_action = action_combo
+                        your_payoff, opp_payoff = payoffs
+                    else:
+                        opp_action, your_action = action_combo
+                        opp_payoff, your_payoff = payoffs
+                    payoff_lines.append(
+                        f"- If you {your_action} and opponent {opp_action}: ({your_payoff}, {opp_payoff})"
+                    )
+            else:  # player only
+                payoff_lines.append("\nYour Payoffs:")
+                for action_combo, payoffs in game.payoff_matrix.items():
+                    if player_id == 1:
+                        your_action, opp_action = action_combo
+                        your_payoff = payoffs[0]
+                    else:
+                        opp_action, your_action = action_combo
+                        your_payoff = payoffs[1]
+                    payoff_lines.append(
+                        f"- If you {your_action} and opponent {opp_action}: {your_payoff}"
+                    )
+            sections.append("\n".join(payoff_lines))
+
+        # Format history with payoffs (only for repeated games)
+        if is_repeated:
+            if history:
+                history_lines = ["\nPrevious rounds:"]
+                for i, actions in enumerate(history):
+                    if game.num_players == 2:
+                        line = f"Round {i+1}: Player 1 chose {actions[0]}, Player 2 chose {actions[1]}"
+                        # Add payoffs if available
+                        if history_payoffs and i < len(history_payoffs):
+                            line += f" → Payoffs: {history_payoffs[i]}"
+                    else:
+                        line = f"Round {i+1}: " + ", ".join([
+                            f"Player {j+1} chose {action}"
+                            for j, action in enumerate(actions)
+                        ])
+                        if history_payoffs and i < len(history_payoffs):
+                            line += f" → Payoffs: {history_payoffs[i]}"
+                    history_lines.append(line)
+
+                # Add cumulative payoffs
+                if cumulative_payoffs and game.num_players == 2:
+                    if player_id == 1:
+                        history_lines.append(
+                            f"Your cumulative payoff: {cumulative_payoffs[0]} | "
+                            f"Opponent's cumulative payoff: {cumulative_payoffs[1]}"
+                        )
+                    else:
+                        history_lines.append(
+                            f"Your cumulative payoff: {cumulative_payoffs[1]} | "
+                            f"Opponent's cumulative payoff: {cumulative_payoffs[0]}"
+                        )
+
+                sections.append("\n".join(history_lines))
             else:
-                history_str = "\n".join([
-                    f"Round {i+1}: " + ", ".join([
-                        f"Player {j+1} chose {action}"
-                        for j, action in enumerate(actions)
-                    ])
-                    for i, actions in enumerate(history)
-                ])
-        else:
-            history_str = "No previous rounds."
+                sections.append("\nPrevious rounds:\nNo previous rounds.")
 
         actions_str = ", ".join([f'"{a}"' for a in game.actions])
+        sections.append(
+            f"\nYou are Player {player_id}. Your available choices are: {actions_str}.\n"
+            f"What is your choice for this round? Respond with only one word from the available choices."
+        )
 
-        return f"""You are playing a repeated {game.name} game.
-Previous rounds:
-{history_str}
-
-You are Player {player_id}. Your available choices are: {actions_str}.
-What is your choice for this round? Respond with only one word from the available choices."""
+        return "\n".join(sections)
 
     async def get_action(
         self,
@@ -71,6 +128,10 @@ What is your choice for this round? Respond with only one word from the availabl
         game: GameDefinition,
         history: List[Tuple[str, ...]],
         timeout: float = DEFAULT_TIMEOUT,
+        payoff_display: str = "full",
+        history_payoffs: Optional[List[Tuple[int, ...]]] = None,
+        cumulative_payoffs: Optional[Tuple[int, ...]] = None,
+        is_repeated: bool = True,
     ) -> Tuple[str, float, str, str]:
         """Query model for action decision.
 
@@ -80,11 +141,21 @@ What is your choice for this round? Respond with only one word from the availabl
             game: The game definition.
             history: List of previous round actions.
             timeout: Request timeout in seconds.
+            payoff_display: "full", "player", or "none" for payoff info in prompt.
+            history_payoffs: List of payoff tuples from previous rounds.
+            cumulative_payoffs: Running total of payoffs per player.
+            is_repeated: True for repeated/sequential games, False for one-off.
 
         Returns:
             Tuple of (action, response_time, prompt, raw_response).
         """
-        prompt = self._build_prompt(game, history, player.player_id)
+        prompt = self._build_prompt(
+            game, history, player.player_id,
+            payoff_display=payoff_display,
+            history_payoffs=history_payoffs,
+            cumulative_payoffs=cumulative_payoffs,
+            is_repeated=is_repeated,
+        )
         start_time = time.time()
 
         try:
@@ -182,6 +253,10 @@ class GameRunner:
         session: aiohttp.ClientSession,
         players: List[PlayerConfig],
         history: List[Tuple[str, ...]],
+        payoff_display: str = "full",
+        history_payoffs: Optional[List[Tuple[int, ...]]] = None,
+        cumulative_payoffs: Optional[Tuple[int, ...]] = None,
+        is_repeated: bool = True,
     ) -> Tuple[Tuple[str, ...], Tuple[int, ...], Tuple[float, ...], Tuple[str, ...], Tuple[str, ...]]:
         """Play a single round of the game.
 
@@ -189,13 +264,23 @@ class GameRunner:
             session: The aiohttp session.
             players: List of player configurations.
             history: List of previous round actions.
+            payoff_display: "full", "player", or "none" for payoff info in prompt.
+            history_payoffs: List of payoff tuples from previous rounds.
+            cumulative_payoffs: Running total of payoffs per player.
+            is_repeated: True for repeated/sequential games, False for one-off.
 
         Returns:
             Tuple of (actions, payoffs, response_times, prompts, raw_responses).
         """
         # Get actions from all players concurrently
         tasks = [
-            self.client.get_action(session, player, self.game, history)
+            self.client.get_action(
+                session, player, self.game, history,
+                payoff_display=payoff_display,
+                history_payoffs=history_payoffs,
+                cumulative_payoffs=cumulative_payoffs,
+                is_repeated=is_repeated,
+            )
             for player in players
         ]
         results = await asyncio.gather(*tasks)
