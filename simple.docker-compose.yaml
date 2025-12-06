@@ -1,0 +1,107 @@
+networks:
+  gamenet:
+    driver: bridge
+
+volumes:
+  WORKSPACE:
+  OLLAMA_MODELS:
+  DATA_VOL:
+
+x-workspace-resources:
+  &workspace-resources
+  deploy:
+    resources:
+      limits:
+        cpus: ${WORKSPACE_CPUS:-2.0}
+        memory: ${WORKSPACE_MEMORY:-4g}
+      reservations:
+        cpus: ${WORKSPACE_RES_CPUS:-0.5}
+        memory: ${WORKSPACE_RES_MEMORY:-1g}
+
+x-ollama-settings:
+  &ollama-settings
+  environment:
+    - OLLAMA_DEBUG=1 #0 (No debug output), 1 (Debug Output)
+    - OLLAMA_VERBOSE=1 #0 (No verbose logging), 1 (Verbose logging)
+    - OLLAMA_METRICS=1 #0 (No Performance Metrics), 1 (Performance Metrics)
+    - OLLAMA_NUM_PARALLEL=2 #MAX TO RUN CONCURRENTLY
+    - OLLAMA_MAX_LOADED_MODELS=2  #MAX to 'keep warm'
+    - OLLAMA_KEEP_ALIVE=10m #-1 (Forever), 0 (Request only), 10m (10 minutes)
+    - OLLAMA_FLASH_ATTENTION=1 #0 (False), 1 (True)
+    - OLLAMA_MODELS=/root/.ollama/models
+
+x-llama-farm-resources:
+  &llama-farm-resources
+#  image: alpine/ollama #CPU BASED OLLAMA IMAGE FOR 'UNIVERSAL'!
+  build:
+    context: ImageFactory
+    dockerfile: ollama.basic.Dockerfile
+  <<: *ollama-settings
+  volumes:
+    - OLLAMA_MODELS:/root/.ollama/models:z
+  networks:
+    - gamenet
+  healthcheck:
+    test: [ "CMD", "ollama", "ps" ]      # Basic check: verifies Ollama server is responsive (ps-> Running models
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+  deploy:
+    resources:
+      limits:
+        cpus: ${LLAMA_CPUS:-2.0}
+        memory: ${LLAMA_MEMORY:-4g}
+      reservations:
+        cpus: ${LLAMA_RES_CPUS:-0.5}
+        memory: ${LLAMA_RES_MEMORY:-1g}
+
+services:
+  pyapp:
+    build:
+      context: ImageFactory
+      dockerfile: pybase.Dockerfile
+    container_name: pyapp
+    #privileged: true
+    volumes:
+      - WORKSPACE:/workspace:z
+      - OLLAMA_MODELS:/root/.ollama/models:z
+      - DATA_VOL:/data:z
+    hostname: pyapp
+    networks:
+      - gamenet
+    ports:
+      - "${PYAPP_PORT:-2718}:2718"
+      - "${LLAMA_PRIME:-11432}:11434"
+    restart: unless-stopped
+    <<: *workspace-resources
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:2718/health || exit 1"] #CHECK HEALTH OF MARIMO!
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    extra_hosts: #THIS ALLOWS US TO CALL LOCAL OLLAMA!
+      - host.docker.internal:host-gateway
+
+
+  llamafarm1:
+    <<: *llama-farm-resources
+    container_name: llamafarm1
+    hostname: ollamaone
+    ports:
+      - "${LLAMA_FARM_ONE:-11431}:11434"
+    depends_on:
+      pyapp:
+        condition: service_healthy
+  llamafarm2:
+    <<: *llama-farm-resources
+    container_name: llamafarm2
+    hostname: ollamatwo
+    ports:
+      - "${LLAMA_FARM_TWO:-11431}:11434"
+    depends_on:
+      pyapp:
+        condition: service_healthy
+
+
