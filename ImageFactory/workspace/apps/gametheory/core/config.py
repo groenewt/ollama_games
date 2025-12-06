@@ -1,8 +1,12 @@
 """Configuration constants for game theory package."""
 
 import asyncio
+import logging
+import os
 import aiohttp
 from typing import List, Tuple, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 # Default Ollama models (fallback if discovery fails)
 DEFAULT_OLLAMA_MODELS: List[str] = [
@@ -25,10 +29,17 @@ DEFAULT_OLLAMA_ENDPOINTS: List[str] = [
 OLLAMA_MODELS = DEFAULT_OLLAMA_MODELS
 OLLAMA_ENDPOINTS = DEFAULT_OLLAMA_ENDPOINTS
 
-# Default settings
-DEFAULT_TIMEOUT = 30
+# Timeouts - configurable via environment variables
+# LLM inference timeout (CPU models can be slow)
+DEFAULT_TIMEOUT = int(os.environ.get("GAMETHEORY_TIMEOUT", "60"))
+# Discovery timeout (fast check if endpoint is up)
+DISCOVERY_TIMEOUT = int(os.environ.get("GAMETHEORY_DISCOVERY_TIMEOUT", "10"))
+# Series-level timeout (max time for entire game series)
+SERIES_TIMEOUT = int(os.environ.get("GAMETHEORY_SERIES_TIMEOUT", "600"))
+
+# Game limits
 DEFAULT_NUM_GAMES = 10
-MAX_NUM_GAMES = 100
+MAX_NUM_GAMES = int(os.environ.get("GAMETHEORY_MAX_GAMES", "1000"))
 
 
 async def check_endpoint_available(endpoint: str, timeout: float = DEFAULT_TIMEOUT ) -> bool:
@@ -48,11 +59,15 @@ async def check_endpoint_available(endpoint: str, timeout: float = DEFAULT_TIMEO
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as response:
                 return response.status == 200
-    except Exception:
+    except asyncio.TimeoutError:
+        logger.debug("Endpoint %s timed out after %.1fs", endpoint, timeout)
+        return False
+    except Exception as e:
+        logger.debug("Endpoint %s check failed: %s: %s", endpoint, type(e).__name__, e)
         return False
 
 
-async def discover_models(endpoint: str, timeout: float = DEFAULT_TIMEOUT) -> List[str]:
+async def discover_models(endpoint: str, timeout: float = DISCOVERY_TIMEOUT) -> List[str]:
     """Query an Ollama endpoint for available models.
 
     Args:
@@ -71,15 +86,22 @@ async def discover_models(endpoint: str, timeout: float = DEFAULT_TIMEOUT) -> Li
                 if response.status == 200:
                     data = await response.json()
                     models = data.get("models", [])
-                    return [m.get("name", "") for m in models if m.get("name")]
+                    model_names = [m.get("name", "") for m in models if m.get("name")]
+                    logger.debug("Discovered %d models at %s", len(model_names), endpoint)
+                    return model_names
+                logger.debug("Endpoint %s returned status %d", endpoint, response.status)
                 return []
-    except Exception:
+    except asyncio.TimeoutError:
+        logger.debug("Discovery timed out for %s after %.1fs", endpoint, timeout)
+        return []
+    except Exception as e:
+        logger.debug("Discovery failed for %s: %s: %s", endpoint, type(e).__name__, e)
         return []
 
 
 async def discover_all_available(
     endpoints: List[str] = None,
-    timeout: float = DEFAULT_TIMEOUT,
+    timeout: float = DISCOVERY_TIMEOUT,
 ) -> Tuple[List[str], List[str], Dict[str, List[str]]]:
     """Discover all available models across all endpoints.
 
@@ -117,7 +139,7 @@ async def discover_all_available(
 
 def discover_sync(
     endpoints: List[str] = None,
-    timeout: float = DEFAULT_TIMEOUT,
+    timeout: float = DISCOVERY_TIMEOUT,
 ) -> Tuple[List[str], List[str], Dict[str, List[str]]]:
     """Synchronous wrapper for discover_all_available.
 
@@ -134,6 +156,6 @@ def discover_sync(
     except RuntimeError:
         # No event loop exists, create one
         return asyncio.run(discover_all_available(endpoints, timeout))
-    except Exception:
-        # Fall back to defaults on any error
+    except Exception as e:
+        logger.warning("Sync discovery failed: %s: %s - using defaults", type(e).__name__, e)
         return DEFAULT_OLLAMA_MODELS.copy(), [], {}

@@ -6,6 +6,8 @@ from .config import (
     DEFAULT_OLLAMA_MODELS,
     DEFAULT_OLLAMA_ENDPOINTS,
     DEFAULT_TIMEOUT,
+    DISCOVERY_TIMEOUT,
+    SERIES_TIMEOUT,
     DEFAULT_NUM_GAMES,
     MAX_NUM_GAMES,
     discover_all_available,
@@ -20,6 +22,7 @@ from .types import (
     SessionMetadata,
     GameSession,
 )
+from .utils import detect_num_players
 
 __all__ = [
     "OLLAMA_MODELS",
@@ -27,6 +30,8 @@ __all__ = [
     "DEFAULT_OLLAMA_MODELS",
     "DEFAULT_OLLAMA_ENDPOINTS",
     "DEFAULT_TIMEOUT",
+    "DISCOVERY_TIMEOUT",
+    "SERIES_TIMEOUT",
     "DEFAULT_NUM_GAMES",
     "MAX_NUM_GAMES",
     "discover_all_available",
@@ -38,4 +43,5 @@ __all__ = [
     "RoundResult",
     "SessionMetadata",
     "GameSession",
+    "detect_num_players",
 ]

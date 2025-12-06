@@ -57,7 +57,7 @@ class RoundResult:
 @dataclass
 class SessionMetadata:
     """Metadata for a game session."""
-    session_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    session_id: str = field(default_factory=lambda: str(uuid.uuid4())[:16])
     created_at: datetime = field(default_factory=datetime.utcnow)
     game_type: str = ""
     runtime_mode: RuntimeMode = RuntimeMode.REPEATED

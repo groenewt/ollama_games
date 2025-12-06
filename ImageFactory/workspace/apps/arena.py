@@ -1,8 +1,5 @@
 """Game Theory LLM Arena - Main tabbed Marimo application."""
 
-import nest_asyncio
-nest_asyncio.apply()
-
 import marimo
 
 __generated_with = "0.17.8"
@@ -33,7 +30,6 @@ def _():
     import polars as pl
     import altair as alt
     import time
-    import nest_asyncio
     from pathlib import Path
     from datetime import datetime
     import sys
@@ -64,6 +60,7 @@ def _():
         discover_all_available,
         DEFAULT_OLLAMA_MODELS,
         DEFAULT_OLLAMA_ENDPOINTS,
+        DISCOVERY_TIMEOUT,
     )
     from gametheory.core.types import GameDefinition
     from gametheory.visualization import (
@@ -79,6 +76,7 @@ def _():
         AnalyticsService,
         DEFAULT_OLLAMA_ENDPOINTS,
         DEFAULT_OLLAMA_MODELS,
+        DISCOVERY_TIMEOUT,
         GAME_REGISTRY,
         GameDefinition,
         OLLAMA_ENDPOINTS,
@@ -102,7 +100,6 @@ def _():
         itertools_product,
         list_games,
         mo,
-        nest_asyncio,
         pl,
         time,
     )
@@ -194,13 +191,13 @@ Round {round_num} | P{player} ({model}) {parse_badge}
 
 
 @app.cell
-async def _(DEFAULT_OLLAMA_ENDPOINTS, DEFAULT_OLLAMA_MODELS, discover_all_available, mo):
+async def _(DEFAULT_OLLAMA_ENDPOINTS, DEFAULT_OLLAMA_MODELS, DISCOVERY_TIMEOUT, discover_all_available, mo):
     # Discover available Ollama models and endpoints at session start
     mo.output.append(mo.md("_Discovering Ollama endpoints..._"))
 
     discovered_models, discovered_endpoints, endpoint_models = await discover_all_available(
         endpoints=DEFAULT_OLLAMA_ENDPOINTS,
-        timeout=3.0,
+        timeout=DISCOVERY_TIMEOUT,
     )
 
     # Use discovered values or fall back to defaults
@@ -677,7 +674,7 @@ def _(GameDefinition, session_custom_games, itertools_product, mo):
 
 
 @app.cell
-def _(
+async def _(
     GameRunner,
     PlayerConfig,
     active_game,
@@ -903,9 +900,8 @@ def _(
 
         return results
 
-    # Execute - use existing event loop (nest_asyncio is applied at module level)
-    loop = asyncio.get_event_loop()
-    results = loop.run_until_complete(run_with_progress())
+    # Execute using native async
+    results = await run_with_progress()
 
     elapsed = time.time() - start_time
 
