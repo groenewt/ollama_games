@@ -30,9 +30,18 @@ make up
 ```bash
 # PORT IS PYAPP_PORT in .env (default of 2718- mirror forward from Marimo default port)
 # probably more accesible to just open your browser and put 'localhost:2718' for url-> but if you wanted to open in terminal
-brave-browser localhost:2718
+brave-browser http://localhost:2718
 ```
-
+5. For more information 
+```bash
+make help
+#pull all models from example model list
+make pull-models
+#down (to fully remove make purge)
+make down
+#Pull a specific Ollama model (View ollama website in references below)
+make pull MODEL="EXAMPLE MODEL NAME"
+```
 
 ## Why This Matters
 ### For AI Safety/Alignment
@@ -60,4 +69,4 @@ brave-browser localhost:2718
 2. [Ollama Github](https://github.com/ollama/ollama)
 3. [Intro to Game Theory](https://plato.stanford.edu/entries/game-theory/)
 4. [More About Game Theory](https://ocw.mit.edu/courses/14.126-game-theory-spring-2024/mit14_126_s24_yildiz-lecture-notes.pdf)
-5. 
+
