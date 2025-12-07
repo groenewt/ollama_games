@@ -6,7 +6,7 @@ volumes:
   WORKSPACE:
   OLLAMA_MODELS:
   DATA_VOL:
-
+  
 x-workspace-resources:
   &workspace-resources
   deploy:
@@ -24,7 +24,7 @@ x-ollama-settings:
     - OLLAMA_DEBUG=1 #0 (No debug output), 1 (Debug Output)
     - OLLAMA_VERBOSE=1 #0 (No verbose logging), 1 (Verbose logging)
     - OLLAMA_METRICS=1 #0 (No Performance Metrics), 1 (Performance Metrics)
-    - OLLAMA_NUM_PARALLEL=2 #MAX TO RUN CONCURRENTLY
+    - OLLAMA_NUM_PARALLEL=1 #MAX TO RUN CONCURRENTLY << Yeah so like this was 2 but its kinda nonsense as we have two farms
     - OLLAMA_MAX_LOADED_MODELS=2  #MAX to 'keep warm'
     - OLLAMA_KEEP_ALIVE=10m #-1 (Forever), 0 (Request only), 10m (10 minutes)
     - OLLAMA_FLASH_ATTENTION=1 #0 (False), 1 (True)
@@ -32,7 +32,7 @@ x-ollama-settings:
 
 x-llama-farm-resources:
   &llama-farm-resources
-#  image: alpine/ollama #CPU BASED OLLAMA IMAGE FOR 'UNIVERSAL'!
+#  image: alpine/ollama #CPU BASED OLLAMA IMAGE FOR 'UNIVERSAL'! << If you want gpu, it gets tricky depending on engine (podman v docker, nvidia v rocm -VULKAN COULD BE GOOD 'universal')
   build:
     context: ImageFactory
     dockerfile: ollama.basic.Dockerfile
@@ -42,7 +42,7 @@ x-llama-farm-resources:
   networks:
     - gamenet
   healthcheck:
-    test: [ "CMD", "ollama", "ps" ]      # Basic check: verifies Ollama server is responsive (ps-> Running models
+    test: [ "CMD", "ollama", "ps" ]      # Basic check: verifies Ollama server is responsive (ps-> Running models)
     interval: 30s
     timeout: 10s
     retries: 3
@@ -81,7 +81,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 240s
-    extra_hosts: #THIS ALLOWS US TO CALL LOCAL OLLAMA!
+    extra_hosts: #THIS ALLOWS US TO CALL LOCAL OLLAMA! 
       - host.docker.internal:host-gateway
 
 
