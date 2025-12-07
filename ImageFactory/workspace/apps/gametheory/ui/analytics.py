@@ -4,6 +4,7 @@ from typing import Dict, List, Any, Optional
 import marimo as mo
 import polars as pl
 
+from ..core.utils import detect_num_players
 from ..visualization.charts import (
     create_response_time_chart,
     create_model_comparison_heatmap,
@@ -17,7 +18,6 @@ from ..visualization.charts import (
 from ..analytics.strategy import StrategyDetector, StrategyType, STRATEGY_DESCRIPTIONS
 from ..analytics.learning import LearningAnalyzer
 from ..analytics.equilibrium import EquilibriumAnalyzer
-from .components import create_metrics_panel
 from ..core.types import GameDefinition
 
 
@@ -228,12 +228,8 @@ class AnalyticsPanelBuilder:
 
     @staticmethod
     def _detect_num_players(df: pl.DataFrame) -> int:
-        """Detect number of players from DataFrame columns."""
-        count = 0
-        while f"player{count + 1}_payoff" in df.columns:
-            count += 1
-        # Only default to 2 if zero players detected (edge case), otherwise use actual count
-        return count if count > 0 else 2
+        """Detect number of players from DataFrame columns (cached)."""
+        return detect_num_players(tuple(df.columns))
 
     @staticmethod
     def reconstruct_game_from_config(session_config: Dict[str, Any], game_type: str) -> Optional[GameDefinition]:

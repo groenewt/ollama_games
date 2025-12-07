@@ -6,7 +6,10 @@ from .core import (
     DEFAULT_OLLAMA_MODELS,
     DEFAULT_OLLAMA_ENDPOINTS,
     DEFAULT_TIMEOUT,
+    DISCOVERY_TIMEOUT,
+    SERIES_TIMEOUT,
     DEFAULT_NUM_GAMES,
+    MAX_NUM_GAMES,
     RuntimeMode,
     GameDefinition,
     PlayerConfig,
@@ -14,8 +17,6 @@ from .core import (
     SessionMetadata,
     GameSession,
     discover_all_available,
-    discover_models,
-    check_endpoint_available,
 )
 from .games import (
     GAME_REGISTRY,
@@ -30,17 +31,25 @@ from .analytics import AnalyticsService
 __version__ = "0.1.0"
 
 __all__ = [
-    # Core
+    # Configuration
     "OLLAMA_MODELS",
     "OLLAMA_ENDPOINTS",
+    "DEFAULT_OLLAMA_MODELS",
+    "DEFAULT_OLLAMA_ENDPOINTS",
     "DEFAULT_TIMEOUT",
+    "DISCOVERY_TIMEOUT",
+    "SERIES_TIMEOUT",
     "DEFAULT_NUM_GAMES",
+    "MAX_NUM_GAMES",
+    # Types
     "RuntimeMode",
     "GameDefinition",
     "PlayerConfig",
     "RoundResult",
     "SessionMetadata",
     "GameSession",
+    # Discovery
+    "discover_all_available",
     # Games
     "GAME_REGISTRY",
     "get_game",

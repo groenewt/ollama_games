@@ -61,6 +61,8 @@ def _():
         DEFAULT_OLLAMA_MODELS,
         DEFAULT_OLLAMA_ENDPOINTS,
         DISCOVERY_TIMEOUT,
+        SERIES_TIMEOUT,
+        MAX_NUM_GAMES,
     )
     from gametheory.core.types import GameDefinition
     from gametheory.visualization import (
@@ -70,6 +72,7 @@ def _():
         create_avg_payoff_chart,
     )
     from gametheory.ui import AnalyticsPanelBuilder
+    from gametheory.core.utils import detect_num_players
 
     return (
         AnalyticsPanelBuilder,
@@ -102,6 +105,9 @@ def _():
         mo,
         pl,
         time,
+        SERIES_TIMEOUT,
+        MAX_NUM_GAMES,
+        detect_num_players,
     )
 
 
@@ -217,7 +223,7 @@ async def _(DEFAULT_OLLAMA_ENDPOINTS, DEFAULT_OLLAMA_MODELS, DISCOVERY_TIMEOUT, 
 
 
 @app.cell
-def _(available_endpoints, get_game_names, mo):
+def _(available_endpoints, get_game_names, mo, MAX_NUM_GAMES):
     # Global UI Elements - Endpoint selection (models depend on this)
     game_names = get_game_names()
 
@@ -241,7 +247,7 @@ def _(available_endpoints, get_game_names, mo):
     )
 
     # Number of games
-    num_games = mo.ui.slider(1, 100, value=10, label="Number of Games")
+    num_games = mo.ui.slider(1, MAX_NUM_GAMES, value=10, label="Number of Games")
 
     # Endpoint selectors (models filtered by these in next cell)
     endpoint_p1 = mo.ui.dropdown(
@@ -677,6 +683,7 @@ def _(GameDefinition, session_custom_games, itertools_product, mo):
 async def _(
     GameRunner,
     PlayerConfig,
+    SERIES_TIMEOUT,
     active_game,
     activity_log,
     asyncio,
@@ -825,7 +832,8 @@ async def _(
         model_names = [p.model for p in players]
         subtitle = " vs ".join(model_names)
 
-        async with aiohttp.ClientSession() as aio_session:
+        connector = aiohttp.TCPConnector(limit=20, keepalive_timeout=30)
+        async with aiohttp.ClientSession(connector=connector) as aio_session:
             for round_num in mo.status.progress_bar(
                 range(num_games.value),
                 title="Running Games",
@@ -900,8 +908,16 @@ async def _(
 
         return results
 
-    # Execute using native async
-    results = await run_with_progress()
+    # Execute using native async with series timeout
+    try:
+        results = await asyncio.wait_for(run_with_progress(), timeout=SERIES_TIMEOUT)
+    except asyncio.TimeoutError:
+        activity_log.append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "ERROR",
+            "message": f"Game series timed out after {SERIES_TIMEOUT}s"
+        })
+        results = []
 
     elapsed = time.time() - start_time
 
@@ -1066,6 +1082,7 @@ def _(AnalyticsPanelBuilder, analytics_service, custom_payoffs_filter, game_type
     else:
         analytics_content = mo.vstack([
             mo.md("## Analytics Dashboard"),
+            mo.md("**Please note you might have to refresh the page**"),
             filter_bar,
             mo.md(f"**Showing:** {selected_game} | **Sessions:** {data['sessions_count']}{filter_summary}"),
             builder.build_metrics_section(data["cumulative"]),
@@ -1111,7 +1128,7 @@ def _(analytics_service, game_type_selector, mo):
 
 
 @app.cell
-def _(AnalyticsPanelBuilder, GAME_REGISTRY, analytics_service, mo, session_manager, session_selector):
+def _(AnalyticsPanelBuilder, GAME_REGISTRY, analytics_service, detect_num_players, mo, session_manager, session_selector):
     # Session detail view with educational analysis panels
     selected_session_id = session_selector.value
 
@@ -1132,12 +1149,12 @@ def _(AnalyticsPanelBuilder, GAME_REGISTRY, analytics_service, mo, session_manag
             )
 
             # Extract player models for labeling
+            _num_players = detect_num_players(tuple(session_results.columns))
             player_models = {}
-            _pnum = 1
-            while f"player{_pnum}_model" in session_results.columns:
-                models = session_results[f"player{_pnum}_model"].unique().to_list()
-                player_models[_pnum] = models[0] if models else f"Player {_pnum}"
-                _pnum += 1
+            for _pnum in range(1, _num_players + 1):
+                if f"player{_pnum}_model" in session_results.columns:
+                    models = session_results[f"player{_pnum}_model"].unique().to_list()
+                    player_models[_pnum] = models[0] if models else f"Player {_pnum}"
 
             # Build strategy analysis
             strategy_section = AnalyticsPanelBuilder.build_strategy_section(

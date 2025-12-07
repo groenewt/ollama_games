@@ -4,21 +4,12 @@ from typing import List, Dict, Any, Optional
 import altair as alt
 import polars as pl
 
+from ..core.utils import detect_num_players
+
 
 def _get_num_players(df: pl.DataFrame) -> int:
-    """Detect number of players from DataFrame columns.
-
-    Args:
-        df: DataFrame to check for player columns.
-
-    Returns:
-        Number of players detected (defaults to 2 only if zero detected).
-    """
-    count = 0
-    while f"player{count + 1}_payoff" in df.columns:
-        count += 1
-    # Only default to 2 if zero players detected (edge case), otherwise use actual count
-    return count if count > 0 else 2
+    """Detect number of players from DataFrame columns (cached)."""
+    return detect_num_players(tuple(df.columns))
 
 
 def create_cumulative_payoff_chart(

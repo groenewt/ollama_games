@@ -3,6 +3,8 @@
 from typing import Dict, Any, List, Optional, Tuple
 import polars as pl
 
+from ..core.utils import detect_num_players
+
 
 class LearningAnalyzer:
     """Analyzes payoff trends over rounds to detect learning behavior."""
@@ -195,10 +197,8 @@ class LearningAnalyzer:
         """
         analysis = {}
 
-        # Detect number of players
-        num_players = 0
-        while f"player{num_players + 1}_payoff" in results_df.columns:
-            num_players += 1
+        # Detect number of players (cached)
+        num_players = detect_num_players(tuple(results_df.columns))
 
         if num_players == 0:
             return {"error": "No player payoff columns found"}

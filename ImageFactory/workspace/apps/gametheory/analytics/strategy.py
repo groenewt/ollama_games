@@ -4,6 +4,8 @@ from enum import Enum
 from typing import List, Tuple, Dict, Any, Optional
 import polars as pl
 
+from ..core.utils import detect_num_players
+
 
 class StrategyType(str, Enum):
     """Known game theory strategies that can be detected."""
@@ -263,10 +265,8 @@ class StrategyDetector:
         """
         analysis = {}
 
-        # Detect number of players
-        num_players = 0
-        while f"player{num_players + 1}_action" in results_df.columns:
-            num_players += 1
+        # Detect number of players (cached)
+        num_players = detect_num_players(tuple(results_df.columns))
 
         if num_players < 2:
             return {"error": "Need at least 2 players for strategy analysis"}

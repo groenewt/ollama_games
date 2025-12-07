@@ -3,6 +3,7 @@
 import asyncio
 import time
 import aiohttp
+from functools import lru_cache
 from typing import List, Tuple, Optional
 
 from ..core.types import GameDefinition, PlayerConfig
@@ -10,34 +11,41 @@ from ..core.config import DEFAULT_TIMEOUT
 from ..metrics.tracker import MetricsTracker
 
 
-def _normalize_action(action: str) -> List[str]:
-    """Generate normalized variants of an action for semantic matching.
+@lru_cache(maxsize=256)
+def _normalize_action(action: str) -> Tuple[str, ...]:
+    """Generate normalized variants of an action for semantic matching (cached).
 
     Args:
         action: The action string (e.g., "free_ride", "cooperate").
 
     Returns:
-        List of variants to match against (e.g., ["free_ride", "free-ride", "free ride", "freeride"]).
+        Tuple of variants to match against (tuple for hashability).
     """
     action_lower = action.lower()
-    variants = [action_lower]
+    variants = {action_lower}
 
     # Generate variants with different separators
     # "free_ride" -> "free-ride", "free ride", "freeride"
     if "_" in action_lower:
-        variants.append(action_lower.replace("_", "-"))
-        variants.append(action_lower.replace("_", " "))
-        variants.append(action_lower.replace("_", ""))
+        variants.update([
+            action_lower.replace("_", "-"),
+            action_lower.replace("_", " "),
+            action_lower.replace("_", ""),
+        ])
     if "-" in action_lower:
-        variants.append(action_lower.replace("-", "_"))
-        variants.append(action_lower.replace("-", " "))
-        variants.append(action_lower.replace("-", ""))
+        variants.update([
+            action_lower.replace("-", "_"),
+            action_lower.replace("-", " "),
+            action_lower.replace("-", ""),
+        ])
     if " " in action_lower:
-        variants.append(action_lower.replace(" ", "_"))
-        variants.append(action_lower.replace(" ", "-"))
-        variants.append(action_lower.replace(" ", ""))
+        variants.update([
+            action_lower.replace(" ", "_"),
+            action_lower.replace(" ", "-"),
+            action_lower.replace(" ", ""),
+        ])
 
-    return list(set(variants))
+    return tuple(variants)
 
 
 def _match_action(response_text: str, actions: List[str]) -> Tuple[Optional[str], bool]:

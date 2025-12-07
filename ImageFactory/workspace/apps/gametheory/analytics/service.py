@@ -3,6 +3,7 @@
 from typing import Dict, List, Any, Optional
 import polars as pl
 
+from ..core.utils import detect_num_players
 from ..metrics.persistence import SessionManager, CrossGameAnalyzer
 from ..metrics.tracker import MetricsTracker
 
@@ -36,7 +37,7 @@ class AnalyticsService:
 
     @staticmethod
     def _get_player_columns(df: pl.DataFrame) -> List[int]:
-        """Detect which player numbers have columns in the DataFrame.
+        """Detect which player numbers have columns in the DataFrame (cached).
 
         Args:
             df: DataFrame to check for player columns.
@@ -44,12 +45,8 @@ class AnalyticsService:
         Returns:
             List of player numbers (1-indexed) that exist in the DataFrame.
         """
-        players = []
-        p = 1
-        while f"player{p}_model" in df.columns or f"player{p}_payoff" in df.columns:
-            players.append(p)
-            p += 1
-        return players if players else [1, 2]  # Default to 2-player for backwards compat
+        num_players = detect_num_players(tuple(df.columns))
+        return list(range(1, num_players + 1)) if num_players > 0 else [1, 2]
 
     def get_dashboard_data(
         self,

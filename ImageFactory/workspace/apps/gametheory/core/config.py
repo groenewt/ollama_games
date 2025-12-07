@@ -67,36 +67,47 @@ async def check_endpoint_available(endpoint: str, timeout: float = DEFAULT_TIMEO
         return False
 
 
-async def discover_models(endpoint: str, timeout: float = DISCOVERY_TIMEOUT) -> List[str]:
+async def discover_models(
+    endpoint: str,
+    timeout: float = DISCOVERY_TIMEOUT,
+    session: aiohttp.ClientSession = None,
+) -> List[str]:
     """Query an Ollama endpoint for available models.
 
     Args:
         endpoint: The Ollama API base URL.
         timeout: Request timeout in seconds.
+        session: Optional shared aiohttp session for connection pooling.
 
     Returns:
         List of model names available at this endpoint, empty if failed.
     """
+    should_close = session is None
+    if session is None:
+        session = aiohttp.ClientSession()
+
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{endpoint}/api/tags",
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    models = data.get("models", [])
-                    model_names = [m.get("name", "") for m in models if m.get("name")]
-                    logger.debug("Discovered %d models at %s", len(model_names), endpoint)
-                    return model_names
-                logger.debug("Endpoint %s returned status %d", endpoint, response.status)
-                return []
+        async with session.get(
+            f"{endpoint}/api/tags",
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as response:
+            if response.status == 200:
+                data = await response.json()
+                models = data.get("models", [])
+                model_names = [m.get("name", "") for m in models if m.get("name")]
+                logger.debug("Discovered %d models at %s", len(model_names), endpoint)
+                return model_names
+            logger.debug("Endpoint %s returned status %d", endpoint, response.status)
+            return []
     except asyncio.TimeoutError:
         logger.debug("Discovery timed out for %s after %.1fs", endpoint, timeout)
         return []
     except Exception as e:
         logger.debug("Discovery failed for %s: %s: %s", endpoint, type(e).__name__, e)
         return []
+    finally:
+        if should_close:
+            await session.close()
 
 
 async def discover_all_available(
@@ -104,6 +115,8 @@ async def discover_all_available(
     timeout: float = DISCOVERY_TIMEOUT,
 ) -> Tuple[List[str], List[str], Dict[str, List[str]]]:
     """Discover all available models across all endpoints.
+
+    Uses connection pooling to efficiently query multiple endpoints in parallel.
 
     Args:
         endpoints: List of endpoints to check (defaults to DEFAULT_OLLAMA_ENDPOINTS).
@@ -117,9 +130,12 @@ async def discover_all_available(
     """
     endpoints = endpoints or DEFAULT_OLLAMA_ENDPOINTS
 
-    # Query all endpoints in parallel
-    tasks = [discover_models(ep, timeout) for ep in endpoints]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Use shared session with connection pooling for all parallel requests
+    connector = aiohttp.TCPConnector(limit=20, keepalive_timeout=30)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        # Query all endpoints in parallel with shared session
+        tasks = [discover_models(ep, timeout, session) for ep in endpoints]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
     available_endpoints = []
     all_models = set()
@@ -135,27 +151,3 @@ async def discover_all_available(
     available_models = sorted(all_models)
 
     return available_models, available_endpoints, endpoint_models
-
-
-def discover_sync(
-    endpoints: List[str] = None,
-    timeout: float = DISCOVERY_TIMEOUT,
-) -> Tuple[List[str], List[str], Dict[str, List[str]]]:
-    """Synchronous wrapper for discover_all_available.
-
-    Args:
-        endpoints: List of endpoints to check.
-        timeout: Timeout per endpoint in seconds.
-
-    Returns:
-        Same as discover_all_available.
-    """
-    try:
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(discover_all_available(endpoints, timeout))
-    except RuntimeError:
-        # No event loop exists, create one
-        return asyncio.run(discover_all_available(endpoints, timeout))
-    except Exception as e:
-        logger.warning("Sync discovery failed: %s: %s - using defaults", type(e).__name__, e)
-        return DEFAULT_OLLAMA_MODELS.copy(), [], {}

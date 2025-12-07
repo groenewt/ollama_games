@@ -76,15 +76,6 @@ def list_games() -> List[str]:
     return list(GAME_REGISTRY.keys())
 
 
-def list_games_by_players(num_players: int) -> List[str]:
-    """List games that support a specific number of players."""
-    return [
-        game_id
-        for game_id, game in GAME_REGISTRY.items()
-        if game.num_players == num_players
-    ]
-
-
 def get_game_names() -> Dict[str, str]:
     """Get a mapping of game_id to display name for UI dropdowns."""
     return {game_id: game.name for game_id, game in GAME_REGISTRY.items()}
@@ -92,22 +83,7 @@ def get_game_names() -> Dict[str, str]:
 
 __all__ = [
     "GAME_REGISTRY",
-    "TWO_PLAYER_GAMES",
-    "MULTI_PLAYER_GAMES",
-    "SEQUENTIAL_GAMES",
     "get_game",
     "list_games",
-    "list_games_by_players",
     "get_game_names",
-    "PRISONERS_DILEMMA",
-    "CHICKEN",
-    "STAG_HUNT",
-    "BATTLE_OF_SEXES",
-    "MATCHING_PENNIES",
-    "TRUST_GAME",
-    "PUBLIC_GOODS",
-    "COORDINATION",
-    "THREE_PLAYER_PUBLIC_GOOD",
-    "ITERATED_PRISONERS_DILEMMA",
-    "PUNISHMENT_PUBLIC_GOODS",
 ]
