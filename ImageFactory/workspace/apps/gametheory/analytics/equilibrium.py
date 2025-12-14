@@ -373,3 +373,378 @@ class EquilibriumAnalyzer:
             "dominant_strategies": dominant,
             "is_social_dilemma": game_type == "social_dilemma",
         }
+
+    def calculate_equilibrium_distance(
+        self,
+        game: GameDefinition,
+        results_df: pl.DataFrame,
+    ) -> Dict[str, Any]:
+        """Calculate distance from Nash equilibrium play.
+
+        Measures how far observed play deviates from Nash equilibrium,
+        using action frequencies and payoff regret.
+
+        Args:
+            game: The game definition.
+            results_df: DataFrame with game results.
+
+        Returns:
+            Dictionary with distance metrics.
+        """
+        nash = self.find_nash_equilibria(game)
+        num_players = game.num_players
+
+        if not nash or results_df.is_empty():
+            return {
+                "nash_equilibria": nash,
+                "has_nash": bool(nash),
+                "distance_metrics": None,
+                "note": "No Nash equilibrium or no results",
+            }
+
+        total_rounds = results_df.height
+        action_cols = [f"player{p+1}_action" for p in range(num_players)]
+
+        # Calculate action frequency distance for each Nash equilibrium
+        best_nash = None
+        min_distance = float("inf")
+
+        for eq in nash:
+            distance = 0.0
+            for player_idx, action_col in enumerate(action_cols):
+                if action_col not in results_df.columns:
+                    continue
+
+                eq_action = eq[player_idx]
+                # Frequency of playing equilibrium action
+                eq_freq = (
+                    results_df.filter(pl.col(action_col) == eq_action).height
+                    / total_rounds
+                )
+                # Distance = 1 - frequency (0 = perfect, 1 = never played)
+                distance += 1 - eq_freq
+
+            # Average across players
+            distance /= num_players
+
+            if distance < min_distance:
+                min_distance = distance
+                best_nash = eq
+
+        # Calculate regret (how much better players could have done with Nash)
+        regret = self._calculate_regret(game, results_df, nash)
+
+        return {
+            "nash_equilibria": nash,
+            "closest_nash": best_nash,
+            "action_distance": round(min_distance, 4),
+            "regret": regret,
+            "nash_play_rate": round(1 - min_distance, 4),
+            "interpretation": self._interpret_distance(min_distance),
+        }
+
+    def _calculate_regret(
+        self,
+        game: GameDefinition,
+        results_df: pl.DataFrame,
+        nash: List[Tuple[str, ...]],
+    ) -> Dict[str, float]:
+        """Calculate regret for each player vs Nash play.
+
+        Args:
+            game: The game definition.
+            results_df: DataFrame with results.
+            nash: List of Nash equilibria.
+
+        Returns:
+            Dictionary with regret per player.
+        """
+        num_players = game.num_players
+        regret = {}
+
+        for player_idx in range(num_players):
+            player_num = player_idx + 1
+            payoff_col = f"player{player_num}_payoff"
+
+            if payoff_col not in results_df.columns:
+                continue
+
+            actual_payoff = results_df[payoff_col].mean()
+
+            # Calculate expected Nash payoff
+            nash_payoffs = []
+            for eq in nash:
+                if eq in game.payoff_matrix:
+                    nash_payoffs.append(game.payoff_matrix[eq][player_idx])
+
+            if nash_payoffs:
+                nash_payoff = sum(nash_payoffs) / len(nash_payoffs)
+                regret[f"player{player_num}"] = round(nash_payoff - actual_payoff, 4)
+            else:
+                regret[f"player{player_num}"] = None
+
+        return regret
+
+    def _interpret_distance(self, distance: float) -> str:
+        """Interpret equilibrium distance.
+
+        Args:
+            distance: Action distance from Nash.
+
+        Returns:
+            Human-readable interpretation.
+        """
+        if distance < 0.1:
+            return "Near-perfect Nash equilibrium play"
+        elif distance < 0.25:
+            return "Strong alignment with Nash equilibrium"
+        elif distance < 0.5:
+            return "Moderate deviation from Nash equilibrium"
+        elif distance < 0.75:
+            return "Substantial deviation from Nash equilibrium"
+        else:
+            return "Significant departure from Nash equilibrium"
+
+    def detect_equilibrium_convergence(
+        self,
+        game: GameDefinition,
+        results_df: pl.DataFrame,
+        window_size: int = 5,
+    ) -> Dict[str, Any]:
+        """Detect if play is converging toward Nash equilibrium.
+
+        Analyzes whether Nash equilibrium action frequency increases over time.
+
+        Args:
+            game: The game definition.
+            results_df: DataFrame with game results.
+            window_size: Window size for trend analysis.
+
+        Returns:
+            Dictionary with convergence analysis.
+        """
+        nash = self.find_nash_equilibria(game)
+        num_players = game.num_players
+
+        if not nash or results_df.is_empty() or results_df.height < window_size * 2:
+            return {
+                "converging": False,
+                "note": "Insufficient data or no Nash equilibrium",
+            }
+
+        # Track Nash action rate over time windows
+        window_nash_rates = []
+        total_rounds = results_df.height
+
+        for start in range(0, total_rounds - window_size + 1, window_size // 2):
+            window_df = results_df.slice(start, window_size)
+
+            # Count Nash equilibrium plays in this window
+            nash_count = 0
+            for eq in nash:
+                # Build filter for this equilibrium
+                filters = []
+                for player_idx in range(num_players):
+                    action_col = f"player{player_idx + 1}_action"
+                    if action_col in window_df.columns:
+                        filters.append(pl.col(action_col) == eq[player_idx])
+
+                if filters:
+                    combined = filters[0]
+                    for f in filters[1:]:
+                        combined = combined & f
+                    nash_count += window_df.filter(combined).height
+
+            nash_rate = nash_count / (window_size * len(nash)) if nash else 0
+            window_nash_rates.append(nash_rate)
+
+        if len(window_nash_rates) < 2:
+            return {"converging": False, "note": "Insufficient windows"}
+
+        # Calculate trend
+        import numpy as np
+
+        x = np.arange(len(window_nash_rates))
+        slope = np.polyfit(x, window_nash_rates, 1)[0]
+
+        # Convergence: positive slope and increasing final rate
+        first_rate = window_nash_rates[0]
+        last_rate = window_nash_rates[-1]
+        converging = slope > 0.02 and last_rate > first_rate
+
+        return {
+            "converging": converging,
+            "slope": round(float(slope), 4),
+            "first_window_rate": round(first_rate, 4),
+            "last_window_rate": round(last_rate, 4),
+            "improvement": round(last_rate - first_rate, 4),
+            "window_rates": [round(r, 4) for r in window_nash_rates],
+            "interpretation": (
+                f"Play is {'converging toward' if converging else 'not converging to'} Nash equilibrium"
+            ),
+        }
+
+    def compare_to_mixed_nash(
+        self,
+        game: GameDefinition,
+        results_df: pl.DataFrame,
+    ) -> Dict[str, Any]:
+        """Compare observed play to theoretical mixed Nash equilibrium.
+
+        For games without pure Nash equilibrium, compares action frequencies
+        to what a mixed strategy equilibrium would predict.
+
+        Args:
+            game: The game definition.
+            results_df: DataFrame with game results.
+
+        Returns:
+            Dictionary with mixed Nash comparison.
+        """
+        pure_nash = self.find_nash_equilibria(game)
+
+        if pure_nash:
+            return {
+                "has_pure_nash": True,
+                "pure_nash": pure_nash,
+                "note": "Game has pure strategy Nash equilibrium",
+            }
+
+        if results_df.is_empty():
+            return {"has_pure_nash": False, "note": "No results data"}
+
+        # For 2-player 2-action games, calculate theoretical mixed Nash
+        num_players = game.num_players
+        actions = game.actions
+
+        if num_players != 2 or len(actions) != 2:
+            return {
+                "has_pure_nash": False,
+                "note": "Mixed Nash calculation only supported for 2x2 games",
+            }
+
+        # Calculate mixed Nash probabilities for 2x2 game
+        # Player 1 mixes to make Player 2 indifferent, and vice versa
+        a1, a2 = actions
+
+        # Get payoffs for each outcome
+        try:
+            p2_payoffs = {
+                (a1, a1): game.payoff_matrix[(a1, a1)][1],
+                (a1, a2): game.payoff_matrix[(a1, a2)][1],
+                (a2, a1): game.payoff_matrix[(a2, a1)][1],
+                (a2, a2): game.payoff_matrix[(a2, a2)][1],
+            }
+            p1_payoffs = {
+                (a1, a1): game.payoff_matrix[(a1, a1)][0],
+                (a1, a2): game.payoff_matrix[(a1, a2)][0],
+                (a2, a1): game.payoff_matrix[(a2, a1)][0],
+                (a2, a2): game.payoff_matrix[(a2, a2)][0],
+            }
+        except KeyError:
+            return {"has_pure_nash": False, "note": "Incomplete payoff matrix"}
+
+        # P1 plays a1 with prob p to make P2 indifferent
+        # P2's EU(a1) = p * p2_payoffs[(a1,a1)] + (1-p) * p2_payoffs[(a2,a1)]
+        # P2's EU(a2) = p * p2_payoffs[(a1,a2)] + (1-p) * p2_payoffs[(a2,a2)]
+        # Set equal and solve for p
+        denom = (
+            p2_payoffs[(a1, a1)]
+            - p2_payoffs[(a2, a1)]
+            - p2_payoffs[(a1, a2)]
+            + p2_payoffs[(a2, a2)]
+        )
+
+        if abs(denom) < 0.001:
+            return {"has_pure_nash": False, "note": "No interior mixed equilibrium"}
+
+        p1_mix = (p2_payoffs[(a2, a2)] - p2_payoffs[(a2, a1)]) / denom
+
+        # Similarly for P2
+        denom2 = (
+            p1_payoffs[(a1, a1)]
+            - p1_payoffs[(a1, a2)]
+            - p1_payoffs[(a2, a1)]
+            + p1_payoffs[(a2, a2)]
+        )
+
+        if abs(denom2) < 0.001:
+            return {"has_pure_nash": False, "note": "No interior mixed equilibrium"}
+
+        p2_mix = (p1_payoffs[(a2, a2)] - p1_payoffs[(a1, a2)]) / denom2
+
+        # Check if mix probabilities are valid (between 0 and 1)
+        if not (0 < p1_mix < 1 and 0 < p2_mix < 1):
+            return {
+                "has_pure_nash": False,
+                "note": "Mixed equilibrium probabilities outside [0,1]",
+            }
+
+        # Compare to observed frequencies
+        total_rounds = results_df.height
+
+        p1_observed = (
+            results_df.filter(pl.col("player1_action") == a1).height / total_rounds
+            if "player1_action" in results_df.columns
+            else None
+        )
+        p2_observed = (
+            results_df.filter(pl.col("player2_action") == a1).height / total_rounds
+            if "player2_action" in results_df.columns
+            else None
+        )
+
+        # Calculate deviation from mixed Nash
+        p1_deviation = abs(p1_observed - p1_mix) if p1_observed is not None else None
+        p2_deviation = abs(p2_observed - p2_mix) if p2_observed is not None else None
+
+        return {
+            "has_pure_nash": False,
+            "mixed_nash": {
+                "player1": {
+                    "action": a1,
+                    "probability": round(p1_mix, 4),
+                },
+                "player2": {
+                    "action": a1,
+                    "probability": round(p2_mix, 4),
+                },
+            },
+            "observed": {
+                "player1": round(p1_observed, 4) if p1_observed is not None else None,
+                "player2": round(p2_observed, 4) if p2_observed is not None else None,
+            },
+            "deviation": {
+                "player1": round(p1_deviation, 4) if p1_deviation is not None else None,
+                "player2": round(p2_deviation, 4) if p2_deviation is not None else None,
+            },
+            "interpretation": self._interpret_mixed_nash_deviation(
+                p1_deviation, p2_deviation
+            ),
+        }
+
+    def _interpret_mixed_nash_deviation(
+        self, p1_dev: Optional[float], p2_dev: Optional[float]
+    ) -> str:
+        """Interpret deviation from mixed Nash equilibrium.
+
+        Args:
+            p1_dev: Player 1's deviation.
+            p2_dev: Player 2's deviation.
+
+        Returns:
+            Human-readable interpretation.
+        """
+        if p1_dev is None or p2_dev is None:
+            return "Insufficient data for comparison"
+
+        avg_dev = (p1_dev + p2_dev) / 2
+
+        if avg_dev < 0.1:
+            return "Play closely matches mixed Nash equilibrium"
+        elif avg_dev < 0.2:
+            return "Moderate alignment with mixed Nash equilibrium"
+        elif avg_dev < 0.35:
+            return "Some deviation from mixed Nash equilibrium"
+        else:
+            return "Substantial deviation from mixed Nash equilibrium"

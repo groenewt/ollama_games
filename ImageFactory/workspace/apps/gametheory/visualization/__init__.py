@@ -11,7 +11,42 @@ from .charts import (
     create_cooperation_rate_chart,
 )
 
+from .allocation_charts import (
+    create_allocation_heatmap,
+    create_concentration_timeline,
+    create_compliance_summary_chart,
+    create_allocation_boxplot,
+    create_field_preference_bars,
+    create_strategy_type_pie,
+    create_hyperparameter_heatmap,
+    create_strategy_cluster_scatter,
+    create_model_comparison_radar,
+    create_allocation_violin,
+    create_evolution_summary_chart,
+)
+
+from .role_charts import (
+    create_session_timeline,
+    create_learning_curve_multi_session,
+    create_role_comparison_heatmap,
+    create_cumulative_reward_chart,
+    create_game_breakdown_bars,
+    create_personality_radar,
+    create_bias_gauge,
+    create_symmetry_gauge,
+    create_adaptability_gauge,
+    create_risk_tolerance_gauge,
+    create_temporal_pattern_chart,
+    create_action_frequency_bars,
+    create_fingerprint_matrix,
+    create_role_cluster_scatter,
+    create_consistency_overlap,
+    create_decision_trajectory,
+    create_response_time_histogram,
+)
+
 __all__ = [
+    # Discrete game charts
     "create_cumulative_payoff_chart",
     "create_action_distribution_chart",
     "create_payoff_comparison_chart",
@@ -20,4 +55,34 @@ __all__ = [
     "create_model_comparison_heatmap",
     "create_leaderboard_chart",
     "create_cooperation_rate_chart",
+    # Allocation game charts
+    "create_allocation_heatmap",
+    "create_concentration_timeline",
+    "create_compliance_summary_chart",
+    "create_allocation_boxplot",
+    "create_field_preference_bars",
+    "create_strategy_type_pie",
+    "create_hyperparameter_heatmap",
+    "create_strategy_cluster_scatter",
+    "create_model_comparison_radar",
+    "create_allocation_violin",
+    "create_evolution_summary_chart",
+    # Role analytics charts
+    "create_session_timeline",
+    "create_learning_curve_multi_session",
+    "create_role_comparison_heatmap",
+    "create_cumulative_reward_chart",
+    "create_game_breakdown_bars",
+    "create_personality_radar",
+    "create_bias_gauge",
+    "create_symmetry_gauge",
+    "create_adaptability_gauge",
+    "create_risk_tolerance_gauge",
+    "create_temporal_pattern_chart",
+    "create_action_frequency_bars",
+    "create_fingerprint_matrix",
+    "create_role_cluster_scatter",
+    "create_consistency_overlap",
+    "create_decision_trajectory",
+    "create_response_time_histogram",
 ]

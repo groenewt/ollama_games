@@ -5,25 +5,40 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 import polars as pl
 
-from ..core.types import SessionMetadata, RoundResult, PlayerConfig
+from ..core.types import SessionMetadata, RoundResult, PlayerConfig, LLMResponse
 from ..core.utils import detect_num_players
+
+if TYPE_CHECKING:
+    from ..storage.interaction_store import InteractionStore
 
 
 class SessionManager:
-    """Manages persistent session data across games."""
+    """Manages persistent session data across games.
 
-    def __init__(self, storage_path: str = "data/sessions"):
+    Supports optional InteractionStore integration for full prompt/response
+    persistence alongside game results.
+    """
+
+    def __init__(
+        self,
+        storage_path: str = "data/sessions",
+        interaction_store: Optional["InteractionStore"] = None,
+    ):
         """Initialize the session manager.
 
         Args:
             storage_path: Path to store session data.
+            interaction_store: Optional InteractionStore for prompt/response persistence.
         """
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self.current_session: Optional[SessionMetadata] = None
+        self.interaction_store = interaction_store
+        # Buffer for round interactions (cleared on session save)
+        self._interaction_buffer: List[List[LLMResponse]] = []
 
     def _get_session_dir(self, date_: Optional[date] = None) -> Path:
         """Get date-partitioned session directory."""
@@ -55,7 +70,28 @@ class SessionManager:
             num_rounds=num_rounds,
             players=players,
         )
+        # Clear interaction buffer for new session
+        self._interaction_buffer = []
         return self.current_session
+
+    def buffer_round_interactions(self, interactions: List[LLMResponse]) -> None:
+        """Buffer interactions from a round for later persistence.
+
+        Call this after each round to collect LLMResponse objects.
+        Interactions are saved when save_results() is called.
+
+        Args:
+            interactions: List of LLMResponse objects from the round.
+        """
+        self._interaction_buffer.append(interactions)
+
+    def set_interaction_store(self, store: "InteractionStore") -> None:
+        """Set or update the interaction store.
+
+        Args:
+            store: InteractionStore instance for persistence.
+        """
+        self.interaction_store = store
 
     def save_session_metadata(self, metadata: SessionMetadata) -> Path:
         """Save session metadata as JSON.
@@ -96,16 +132,20 @@ class SessionManager:
         session_id: str,
         results: List[Dict[str, Any]],
         game_type: str,
+        persist_interactions: bool = True,
     ) -> Path:
         """Save game results to Parquet.
+
+        Also persists buffered interactions if InteractionStore is configured.
 
         Args:
             session_id: The session identifier.
             results: List of game result dictionaries.
             game_type: The game type ID.
+            persist_interactions: Whether to save buffered interactions.
 
         Returns:
-            Path to the saved file.
+            Path to the saved results file.
         """
         session_dir = self._get_session_dir()
         filepath = session_dir / f"session_{session_id}.parquet"
@@ -119,7 +159,46 @@ class SessionManager:
         df = pl.DataFrame(results)
         df.write_parquet(filepath, compression="zstd")
 
+        # Persist interactions if store is configured and we have buffered data
+        if persist_interactions and self.interaction_store and self._interaction_buffer:
+            try:
+                self.interaction_store.save_session_interactions(
+                    session_id=session_id,
+                    all_interactions=self._interaction_buffer,
+                )
+            except Exception as e:
+                # Log but don't fail - interaction persistence is optional
+                import warnings
+                warnings.warn(f"Failed to persist interactions: {e}")
+
+            # Clear buffer after save
+            self._interaction_buffer = []
+
         return filepath
+
+    def save_results_with_interactions(
+        self,
+        session_id: str,
+        results: List[Dict[str, Any]],
+        game_type: str,
+        interactions: List[List[LLMResponse]],
+    ) -> Path:
+        """Save game results and interactions in one call.
+
+        Convenience method for saving all session data at once.
+
+        Args:
+            session_id: The session identifier.
+            results: List of game result dictionaries.
+            game_type: The game type ID.
+            interactions: List of round interactions (each is list of LLMResponse).
+
+        Returns:
+            Path to the saved results file.
+        """
+        # Set buffer and save
+        self._interaction_buffer = interactions
+        return self.save_results(session_id, results, game_type, persist_interactions=True)
 
     def load_session(
         self,
@@ -199,7 +278,7 @@ class SessionManager:
         else:
             dfs = [pl.read_parquet(f) for f in parquet_files]
 
-        df = pl.concat(dfs, how="diagonal")
+        df = pl.concat(dfs, how="diagonal_relaxed")
 
         if game_type:
             df = df.filter(pl.col("game_type") == game_type)

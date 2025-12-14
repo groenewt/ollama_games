@@ -41,6 +41,11 @@ SERIES_TIMEOUT = int(os.environ.get("GAMETHEORY_SERIES_TIMEOUT", "600"))
 DEFAULT_NUM_GAMES = 10
 MAX_NUM_GAMES = int(os.environ.get("GAMETHEORY_MAX_GAMES", "1000"))
 
+# Burr tracking configuration
+BURR_TRACKING_ENABLED = os.environ.get("GAMETHEORY_BURR_TRACKING", "true").lower() == "true"
+BURR_TRACKER_HOST = os.environ.get("BURR_TRACKER_HOST", "localhost")
+BURR_TRACKER_PORT = int(os.environ.get("BURR_TRACKER_PORT", "7241"))
+
 
 async def check_endpoint_available(endpoint: str, timeout: float = DEFAULT_TIMEOUT ) -> bool:
     """Check if an Ollama endpoint is reachable.

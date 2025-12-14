@@ -2,6 +2,7 @@
 
 from typing import List, Dict, Any, Optional
 import altair as alt
+import pandas as pd
 import polars as pl
 
 from ..core.utils import detect_num_players
@@ -12,12 +13,29 @@ def _get_num_players(df: pl.DataFrame) -> int:
     return detect_num_players(tuple(df.columns))
 
 
+def _empty_chart_placeholder(message: str, width: int, height: int) -> alt.Chart:
+    """Create placeholder chart for empty/invalid data.
+
+    Args:
+        message: Message to display
+        width: Chart width
+        height: Chart height
+
+    Returns:
+        Altair text chart with message
+    """
+    return alt.Chart(pd.DataFrame({"text": [message]})).mark_text(
+        fontSize=14, color="#888"
+    ).encode(text="text:N").properties(width=width, height=height, title="")
+
+
 def create_cumulative_payoff_chart(
     results_df: pl.DataFrame,
     player_num: int = 1,
     color: str = "blue",
     width: int = 600,
     height: int = 300,
+    per_session: bool = False,
 ) -> alt.Chart:
     """Generate cumulative payoff line chart for a player.
 
@@ -27,19 +45,47 @@ def create_cumulative_payoff_chart(
         color: Line color.
         width: Chart width.
         height: Chart height.
+        per_session: If True, reset cumulative at session boundaries.
 
     Returns:
         An Altair chart object.
     """
+    # Validate inputs
+    if results_df is None or results_df.is_empty():
+        return _empty_chart_placeholder("No game results data", width, height)
+
     payoff_col = f"player{player_num}_payoff"
     cumulative_col = f"cumulative_payoff_player{player_num}"
     action_col = f"player{player_num}_action"
 
+    # Validate required column exists
+    if payoff_col not in results_df.columns:
+        return _empty_chart_placeholder(f"Missing column: {payoff_col}", width, height)
+
+    # Add game_number if missing
+    if "game_number" not in results_df.columns:
+        results_df = results_df.with_row_index("game_number")
+        results_df = results_df.with_columns(pl.col("game_number") + 1)  # 1-indexed
+    else:
+        # Sort by game_number to ensure correct cumulative order
+        results_df = results_df.sort("game_number")
+
     # Calculate cumulative payoffs if not already present
     if cumulative_col not in results_df.columns:
-        results_df = results_df.with_columns([
-            pl.col(payoff_col).cum_sum().alias(cumulative_col)
-        ])
+        if per_session and "session_id" in results_df.columns:
+            # Reset cumulative at session boundaries
+            results_df = results_df.with_columns([
+                pl.col(payoff_col).cum_sum().over("session_id").alias(cumulative_col)
+            ])
+        else:
+            results_df = results_df.with_columns([
+                pl.col(payoff_col).cum_sum().alias(cumulative_col)
+            ])
+
+    # Build tooltip columns - only include columns that exist
+    tooltip_cols = ["game_number", cumulative_col]
+    if action_col in results_df.columns:
+        tooltip_cols.append(action_col)
 
     return (
         alt.Chart(results_df.to_pandas())
@@ -48,7 +94,7 @@ def create_cumulative_payoff_chart(
             x=alt.X("game_number:O", title="Game Number"),
             y=alt.Y(f"{cumulative_col}:Q", title="Cumulative Payoff"),
             color=alt.value(color),
-            tooltip=["game_number", cumulative_col, action_col],
+            tooltip=tooltip_cols,
         )
         .properties(
             title=f"Player {player_num} Cumulative Payoff",
@@ -75,6 +121,10 @@ def create_action_distribution_chart(
     Returns:
         An Altair chart object.
     """
+    # Validate inputs
+    if results_df is None or results_df.is_empty():
+        return _empty_chart_placeholder("No game results data", width, height)
+
     if num_players is None:
         num_players = _get_num_players(results_df)
 

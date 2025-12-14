@@ -51,6 +51,6 @@ RUN chmod +x /entrypoint.sh
 COPY ./workspace .
 RUN uv sync
 
-EXPOSE 2718 11434
+EXPOSE 2718 11434 7241
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/bin/sh"]

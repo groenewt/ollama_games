@@ -266,3 +266,77 @@ class AnalyticsService:
             Combined DataFrame of all sessions.
         """
         return self.session_manager.load_all_sessions()
+
+    def get_model_stats_dict(self) -> Dict[str, Dict[str, Any]]:
+        """Get cross-game model statistics as a dictionary.
+
+        Returns:
+            Dict keyed by model name with stats:
+            - total_sessions: Number of sessions the model participated in
+            - games_played: Number of unique games played
+            - avg_payoff: Average payoff across all games
+            - coop_rate: Cooperation rate (for discrete games), or None
+        """
+        all_data = self.session_manager.load_all_sessions()
+
+        if all_data.is_empty():
+            return {}
+
+        player_nums = self._get_player_columns(all_data)
+
+        # Collect payoff and action data per model
+        payoff_dfs = []
+        action_dfs = []
+        for p in player_nums:
+            model_col = f"player{p}_model"
+            payoff_col = f"player{p}_payoff"
+            action_col = f"player{p}_action"
+
+            if model_col in all_data.columns and payoff_col in all_data.columns:
+                payoff_dfs.append(all_data.select([
+                    pl.col(model_col).alias("model"),
+                    pl.col(payoff_col).alias("payoff"),
+                    pl.col("game_type"),
+                    pl.col("session_id"),
+                ]))
+
+            if model_col in all_data.columns and action_col in all_data.columns:
+                action_dfs.append(all_data.select([
+                    pl.col(model_col).alias("model"),
+                    pl.col(action_col).alias("action"),
+                ]))
+
+        # Aggregate payoff stats
+        if not payoff_dfs:
+            return {}
+
+        payoff_combined = pl.concat(payoff_dfs, how="diagonal")
+        payoff_stats = payoff_combined.group_by("model").agg([
+            pl.col("session_id").n_unique().alias("total_sessions"),
+            pl.col("game_type").n_unique().alias("games_played"),
+            pl.col("payoff").mean().alias("avg_payoff"),
+        ])
+
+        # Aggregate cooperation stats
+        coop_rates = {}
+        if action_dfs:
+            action_combined = pl.concat(action_dfs, how="diagonal")
+            coop_stats = action_combined.group_by("model").agg([
+                (pl.col("action").is_in(self.COOPERATIVE_ACTIONS).sum()
+                 / pl.len() * 100).alias("coop_rate"),
+            ])
+            for row in coop_stats.iter_rows(named=True):
+                coop_rates[row["model"]] = row["coop_rate"]
+
+        # Build result dict
+        result = {}
+        for row in payoff_stats.iter_rows(named=True):
+            model = row["model"]
+            result[model] = {
+                "total_sessions": row["total_sessions"],
+                "games_played": row["games_played"],
+                "avg_payoff": round(row["avg_payoff"], 2) if row["avg_payoff"] else 0,
+                "coop_rate": round(coop_rates.get(model, 0), 1) if model in coop_rates else None,
+            }
+
+        return result

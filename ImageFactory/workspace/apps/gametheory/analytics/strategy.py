@@ -16,6 +16,13 @@ class StrategyType(str, Enum):
     GRIM_TRIGGER = "grim_trigger"
     RANDOM = "random"
     PAVLOV = "pavlov"  # Win-stay, lose-shift
+    # New strategy types
+    MIXED = "mixed"  # Probabilistic mixing with stable ratio
+    THRESHOLD = "threshold"  # Conditional on payoff threshold
+    BEST_RESPONSE = "best_response"  # Myopic best response to opponent
+    EQUILIBRIUM_SEEKING = "equilibrium_seeking"  # Converging to Nash
+    FORGIVING_TFT = "forgiving_tft"  # TFT with forgiveness
+    TWO_TITS_FOR_TAT = "two_tits_for_tat"  # Responds only to 2 defects
     UNKNOWN = "unknown"
 
 
@@ -26,6 +33,12 @@ STRATEGY_DESCRIPTIONS = {
     StrategyType.GRIM_TRIGGER: "Cooperates until the opponent defects once, then defects forever.",
     StrategyType.RANDOM: "Appears to choose randomly with no clear pattern (near 50/50 split).",
     StrategyType.PAVLOV: "Win-stay, lose-shift: Repeats action if it led to a good outcome, switches otherwise.",
+    StrategyType.MIXED: "Probabilistic strategy with stable cooperation/defection ratio over time.",
+    StrategyType.THRESHOLD: "Cooperates when cumulative payoff is above threshold, defects otherwise.",
+    StrategyType.BEST_RESPONSE: "Myopic best response: plays the action that would have won against opponent's last move.",
+    StrategyType.EQUILIBRIUM_SEEKING: "Gradually converges toward Nash equilibrium play over time.",
+    StrategyType.FORGIVING_TFT: "Like TFT but occasionally cooperates after opponent defects (forgiveness).",
+    StrategyType.TWO_TITS_FOR_TAT: "Only defects after opponent defects twice in a row.",
     StrategyType.UNKNOWN: "No clear strategy pattern detected.",
 }
 
@@ -127,6 +140,52 @@ class StrategyDetector:
                     "Player appears to use win-stay, lose-shift strategy.",
                 )
 
+        # Check Two-Tits-for-Tat
+        ttft_score, ttft_explanation = self._score_two_tits_for_tat(player_cd, opponent_cd)
+        if ttft_score > 0.8:
+            return (
+                StrategyType.TWO_TITS_FOR_TAT,
+                ttft_score,
+                ttft_explanation,
+            )
+
+        # Check Forgiving TFT
+        ftft_score, ftft_explanation = self._score_forgiving_tft(player_cd, opponent_cd)
+        if ftft_score > 0.75:
+            return (
+                StrategyType.FORGIVING_TFT,
+                ftft_score,
+                ftft_explanation,
+            )
+
+        # Check Equilibrium Seeking
+        eq_score, eq_explanation = self._score_equilibrium_seeking(player_cd)
+        if eq_score > 0.7:
+            return (
+                StrategyType.EQUILIBRIUM_SEEKING,
+                eq_score,
+                eq_explanation,
+            )
+
+        # Check Threshold strategy (if payoffs available)
+        if player_payoffs:
+            thresh_score, thresh_explanation = self._score_threshold(player_cd, player_payoffs)
+            if thresh_score > 0.8:
+                return (
+                    StrategyType.THRESHOLD,
+                    thresh_score,
+                    f"Threshold strategy detected. {thresh_explanation}",
+                )
+
+        # Check Mixed strategy
+        mixed_score, mix_ratio = self._score_mixed(player_cd)
+        if mixed_score > 0.75:
+            return (
+                StrategyType.MIXED,
+                mixed_score,
+                f"Stable mixed strategy with ~{mix_ratio*100:.0f}% cooperation rate.",
+            )
+
         # Check random
         random_score = self._score_random(player_cd)
         if random_score > 0.75:
@@ -135,6 +194,15 @@ class StrategyDetector:
                 StrategyType.RANDOM,
                 random_score,
                 f"Action split is {c_count}C/{len(player_cd)-c_count}D, suggesting random choice.",
+            )
+
+        # Check Best Response (less strict, fallback)
+        br_score = self._score_best_response(player_cd, opponent_cd)
+        if br_score > 0.85:
+            return (
+                StrategyType.BEST_RESPONSE,
+                br_score,
+                "Player appears to play myopic best response.",
             )
 
         # No clear pattern
@@ -253,6 +321,270 @@ class StrategyDetector:
         # Random would be close to 0.5
         # Score is higher when c_ratio is closer to 0.5
         return 1.0 - abs(0.5 - c_ratio) * 2
+
+    def _score_mixed(self, player: List[str], window_size: int = 5) -> Tuple[float, float]:
+        """Score how well player matches a stable mixed strategy.
+
+        A mixed strategy maintains a consistent cooperation ratio over time.
+
+        Args:
+            player: List of player's C/D classifications.
+            window_size: Window size for measuring stability.
+
+        Returns:
+            Tuple of (score, estimated_mix_ratio).
+        """
+        if len(player) < window_size * 2:
+            return 0.0, 0.5
+
+        # Calculate cooperation ratio in sliding windows
+        window_ratios = []
+        for i in range(0, len(player) - window_size + 1, window_size // 2):
+            window = player[i : i + window_size]
+            ratio = sum(1 for a in window if a == "C") / len(window)
+            window_ratios.append(ratio)
+
+        if len(window_ratios) < 2:
+            return 0.0, 0.5
+
+        # Mixed strategy should have low variance and ratio not at extremes
+        import numpy as np
+
+        std = np.std(window_ratios)
+        mean_ratio = np.mean(window_ratios)
+
+        # Score high if: low variance AND not pure strategy (0.15 < ratio < 0.85)
+        variance_score = max(0, 1.0 - std * 4)  # Penalize high variance
+        not_pure = 1.0 if 0.15 < mean_ratio < 0.85 else 0.0
+
+        score = variance_score * not_pure
+        return score, float(mean_ratio)
+
+    def _score_threshold(
+        self, player: List[str], payoffs: List[int]
+    ) -> Tuple[float, str]:
+        """Score how well player matches threshold strategy.
+
+        Threshold strategy: cooperate when cumulative payoff is above threshold.
+
+        Args:
+            player: List of player's C/D classifications.
+            payoffs: List of payoffs received.
+
+        Returns:
+            Tuple of (score, explanation).
+        """
+        if len(player) < 5 or len(payoffs) < 5:
+            return 0.0, "Insufficient data"
+
+        # Calculate cumulative payoff at each round
+        cumulative = []
+        total = 0
+        for p in payoffs:
+            total += p
+            cumulative.append(total)
+
+        # Try different thresholds to find best fit
+        import numpy as np
+
+        avg_payoff = np.mean(payoffs)
+        best_score = 0.0
+        best_threshold = 0
+
+        # Test thresholds at various points
+        for threshold_mult in [0.5, 0.75, 1.0, 1.25, 1.5]:
+            threshold = avg_payoff * threshold_mult * len(payoffs) / 2
+
+            matches = 0
+            for i in range(1, len(player)):
+                # Predict: cooperate if above threshold, defect otherwise
+                expected = "C" if cumulative[i - 1] >= threshold else "D"
+                if player[i] == expected:
+                    matches += 1
+
+            score = matches / (len(player) - 1)
+            if score > best_score:
+                best_score = score
+                best_threshold = threshold
+
+        explanation = f"Best fit threshold: {best_threshold:.1f}"
+        return best_score, explanation
+
+    def _score_best_response(
+        self,
+        player: List[str],
+        opponent: List[str],
+        payoff_matrix: Optional[Dict] = None,
+    ) -> float:
+        """Score how well player plays myopic best response.
+
+        Best response: play action that would beat opponent's last action.
+
+        Args:
+            player: List of player's C/D classifications.
+            opponent: List of opponent's C/D classifications.
+            payoff_matrix: Optional payoff matrix for the game.
+
+        Returns:
+            Score from 0.0 to 1.0.
+        """
+        if len(player) < 3:
+            return 0.0
+
+        # Default assumption for PD-like games: D beats C
+        # In PD: if opponent played C, best response is D; if D, depends on game
+        # Simplify: assume best response to C is D, best response to D is D
+        matches = 0
+        for i in range(1, len(player)):
+            opponent_last = opponent[i - 1]
+            # In most games, D is best response (dominant if it exists)
+            expected_best = "D"
+            if player[i] == expected_best:
+                matches += 1
+
+        return matches / (len(player) - 1)
+
+    def _score_equilibrium_seeking(
+        self,
+        player: List[str],
+        equilibrium_action: str = "D",
+        window_size: int = 5,
+    ) -> Tuple[float, str]:
+        """Score if player is converging toward Nash equilibrium.
+
+        Looks for increasing rate of equilibrium action over time.
+
+        Args:
+            player: List of player's C/D classifications.
+            equilibrium_action: The Nash equilibrium action.
+            window_size: Window size for trend analysis.
+
+        Returns:
+            Tuple of (score, explanation).
+        """
+        if len(player) < window_size * 2:
+            return 0.0, "Insufficient data"
+
+        # Calculate equilibrium action rate in windows
+        window_rates = []
+        for i in range(0, len(player) - window_size + 1, window_size // 2):
+            window = player[i : i + window_size]
+            rate = sum(1 for a in window if a == equilibrium_action) / len(window)
+            window_rates.append(rate)
+
+        if len(window_rates) < 2:
+            return 0.0, "Insufficient windows"
+
+        import numpy as np
+
+        # Check if trend is increasing toward equilibrium
+        x = np.arange(len(window_rates))
+        slope = np.polyfit(x, window_rates, 1)[0]
+
+        # Score based on positive trend and final rate
+        final_rate = window_rates[-1]
+
+        if slope > 0.02 and final_rate > 0.7:
+            score = min(1.0, slope * 10 + final_rate * 0.5)
+            explanation = f"Converging to {equilibrium_action}: slope={slope:.3f}, final_rate={final_rate:.2f}"
+        else:
+            score = 0.0
+            explanation = "No convergence detected"
+
+        return score, explanation
+
+    def _score_forgiving_tft(self, player: List[str], opponent: List[str]) -> Tuple[float, str]:
+        """Score how well player matches Forgiving TFT strategy.
+
+        Forgiving TFT: like TFT but cooperates occasionally after opponent defects.
+
+        Args:
+            player: List of player's C/D classifications.
+            opponent: List of opponent's C/D classifications.
+
+        Returns:
+            Tuple of (score, explanation).
+        """
+        if len(player) < 5:
+            return 0.0, "Insufficient data"
+
+        if player[0] != "C":
+            return 0.0, "Did not start with cooperation"
+
+        # Track TFT-like behavior with forgiveness
+        tft_matches = 0
+        forgiveness_count = 0
+        total = len(player) - 1
+
+        for i in range(1, len(player)):
+            opponent_last = opponent[i - 1]
+            player_action = player[i]
+
+            if player_action == opponent_last:
+                tft_matches += 1
+            elif opponent_last == "D" and player_action == "C":
+                # Forgiveness: cooperated after opponent defected
+                forgiveness_count += 1
+                tft_matches += 1  # Count as partial match
+
+        tft_rate = tft_matches / total
+        forgiveness_rate = forgiveness_count / total if total > 0 else 0
+
+        # Forgiving TFT: high TFT rate with some forgiveness
+        if tft_rate > 0.7 and 0.05 < forgiveness_rate < 0.4:
+            score = tft_rate * 0.7 + (1 - abs(forgiveness_rate - 0.15) * 3) * 0.3
+            explanation = f"TFT rate: {tft_rate:.2f}, forgiveness rate: {forgiveness_rate:.2f}"
+            return min(1.0, score), explanation
+
+        return 0.0, "Does not match Forgiving TFT pattern"
+
+    def _score_two_tits_for_tat(self, player: List[str], opponent: List[str]) -> Tuple[float, str]:
+        """Score how well player matches Two-Tits-for-Tat strategy.
+
+        2TFT: defect only after opponent defects twice consecutively.
+
+        Args:
+            player: List of player's C/D classifications.
+            opponent: List of opponent's C/D classifications.
+
+        Returns:
+            Tuple of (score, explanation).
+        """
+        if len(player) < 5:
+            return 0.0, "Insufficient data"
+
+        if player[0] != "C":
+            return 0.0, "Did not start with cooperation"
+
+        # Check 2TFT pattern
+        matches = 0
+        total = 0
+
+        for i in range(2, len(player)):
+            # Look at opponent's last two actions
+            opp_prev1 = opponent[i - 1]
+            opp_prev2 = opponent[i - 2]
+            player_action = player[i]
+
+            # 2TFT: defect only if opponent defected twice in a row
+            if opp_prev1 == "D" and opp_prev2 == "D":
+                expected = "D"
+            else:
+                expected = "C"
+
+            if player_action == expected:
+                matches += 1
+            total += 1
+
+        if total == 0:
+            return 0.0, "Insufficient data"
+
+        score = matches / total
+        explanation = f"Matched 2TFT pattern {matches}/{total} times"
+
+        if score > 0.8:
+            return score, explanation
+        return 0.0, "Does not match 2TFT pattern"
 
     def analyze_session(self, results_df: pl.DataFrame) -> Dict[str, Any]:
         """Analyze strategies for all players in a session.

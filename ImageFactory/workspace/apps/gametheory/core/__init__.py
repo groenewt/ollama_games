@@ -19,8 +19,17 @@ from .types import (
     RoundResult,
     SessionMetadata,
     GameSession,
+    LLMResponse,
+    TokenMetrics,
 )
-from .utils import detect_num_players
+from .role import RoleConfig
+from .utils import (
+    detect_num_players,
+    parse_allocation,
+    normalize_allocation,
+    validate_allocation,
+    parse_allocation_from_result,
+)
 
 __all__ = [
     # Configuration constants
@@ -42,6 +51,13 @@ __all__ = [
     "RoundResult",
     "SessionMetadata",
     "GameSession",
+    "LLMResponse",
+    "TokenMetrics",
+    "RoleConfig",
     # Utilities
     "detect_num_players",
+    "parse_allocation",
+    "normalize_allocation",
+    "validate_allocation",
+    "parse_allocation_from_result",
 ]

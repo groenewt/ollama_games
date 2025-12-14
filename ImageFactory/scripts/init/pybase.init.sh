@@ -73,6 +73,17 @@ log_info "Py App UV management"
 
 uv sync || log_fail "UV FAILURE!!!"
 
+# === Burr Tracking Server ===
+log_info "Starting Burr Tracking Server..."
+BURR_PORT="${BURR_PORT:-7241}"
+BURR_STORAGE_DIR="${BURR_STORAGE_DIR:-/data/burr}"
+mkdir -p "${BURR_STORAGE_DIR}"
+export BURR_PATH="${BURR_STORAGE_DIR}"
+uv run burr --port "${BURR_PORT}" --host 0.0.0.0 --no-open &
+BURR_PID=$!
+log_success "Burr Tracking Server started (PID: ${BURR_PID})"
+sleep 2
+
 log_info "🚀 Starting Marimo on port ${MARIMO_PORT}..."
 # Check if there are notebooks in the directory
 PYAPP_PORT="${PYAPP_PORT:-2718}"

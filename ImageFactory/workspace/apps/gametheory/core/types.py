@@ -36,7 +36,10 @@ class PlayerConfig:
     endpoint: str
     temperature: float = 0.7
     top_p: float = 0.9
+    top_k: int = 40  # Limit token choices (lower = more focused)
+    repeat_penalty: float = 1.1  # Penalize repetition
     system_prompt: Optional[str] = None
+    strategy_hints: Optional[str] = None  # Custom hints to replace default game hints
 
 
 @dataclass
@@ -72,3 +75,89 @@ class GameSession:
     metadata: SessionMetadata
     results: List[RoundResult] = field(default_factory=list)
     status: str = "pending"  # pending, running, completed, error
+
+
+@dataclass
+class LLMResponse:
+    """Complete LLM response with metadata for comprehensive analysis.
+
+    Captures full context of each LLM interaction including:
+    - The prompt sent and raw response received
+    - Parsing status and action extracted
+    - Token usage for cost tracking
+    - Optional reasoning trace and confidence metrics
+    """
+    player_id: int
+    model: str
+    endpoint: str
+    prompt: str
+    raw_response: str
+    parsed_action: Any
+    was_parsed: bool
+    was_normalized: bool  # For allocation games - was budget normalization applied?
+    response_time_ms: float
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    # Token metrics (populated from Ollama response if available)
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    # Decision reasoning capture (experimental)
+    reasoning_trace: Optional[str] = None  # Extracted chain-of-thought if present
+    alternatives_considered: Optional[List[str]] = None  # Other actions mentioned
+    confidence_score: Optional[float] = None  # Estimated decision confidence
+    # Inference parameters used
+    inference_params: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def total_tokens(self) -> Optional[int]:
+        """Calculate total tokens if both counts available."""
+        if self.prompt_tokens is not None and self.completion_tokens is not None:
+            return self.prompt_tokens + self.completion_tokens
+        return None
+
+
+@dataclass
+class TokenMetrics:
+    """Token usage and cost tracking for a single LLM request.
+
+    Aggregated for session-level and cumulative cost analysis.
+    """
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float
+    model: str
+    session_id: str
+    round_number: int
+    player_id: int
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+
+    @classmethod
+    def from_llm_response(
+        cls,
+        response: "LLMResponse",
+        session_id: str,
+        round_number: int,
+        cost_per_prompt_token: float = 0.0,
+        cost_per_completion_token: float = 0.0,
+    ) -> Optional["TokenMetrics"]:
+        """Create TokenMetrics from an LLMResponse if token data available."""
+        if response.prompt_tokens is None or response.completion_tokens is None:
+            return None
+
+        total = response.prompt_tokens + response.completion_tokens
+        cost = (
+            response.prompt_tokens * cost_per_prompt_token / 1000 +
+            response.completion_tokens * cost_per_completion_token / 1000
+        )
+
+        return cls(
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+            total_tokens=total,
+            estimated_cost_usd=cost,
+            model=response.model,
+            session_id=session_id,
+            round_number=round_number,
+            player_id=response.player_id,
+            timestamp=response.timestamp,
+        )

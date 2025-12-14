@@ -669,3 +669,662 @@ class AnalyticsPanelBuilder:
                 }))
 
         return mo.vstack(elements)
+
+    # =====================================================================
+    # ALLOCATION GAME ANALYTICS (Burr games: Blotto, Tennis, Sumo)
+    # =====================================================================
+
+    @staticmethod
+    def build_allocation_analysis_section(
+        results: List[Dict[str, Any]],
+        num_players: int = 2,
+        budget: float = 100.0
+    ) -> mo.Html:
+        """Build allocation analysis section for Burr games.
+
+        Args:
+            results: List of round result dictionaries
+            num_players: Number of players
+            budget: Allocation budget (e.g., 100 troops)
+
+        Returns:
+            Marimo vstack with allocation analytics
+        """
+        from ..analytics.allocation import AllocationAnalyzer
+        from ..visualization.allocation_charts import (
+            create_allocation_heatmap,
+            create_concentration_timeline,
+            create_field_preference_bars,
+        )
+
+        analyzer = AllocationAnalyzer()
+        summaries = analyzer.analyze_session(results, num_players, budget)
+
+        if not summaries:
+            return mo.md("*No allocation data available for analysis.*")
+
+        elements = [mo.md("### Allocation Analysis")]
+
+        # Heatmaps side by side
+        heatmaps = []
+        for player_num in range(1, num_players + 1):
+            heatmap = create_allocation_heatmap(results, player_num)
+            heatmaps.append(heatmap)
+
+        if heatmaps:
+            elements.append(mo.hstack(heatmaps, justify="start"))
+
+        # Strategy metrics summary
+        metrics_rows = []
+        for player_num, summary in summaries.items():
+            metrics_rows.append(
+                f"**P{player_num} ({summary.model[:15]})**: "
+                f"{summary.dominant_strategy.title()} strategy "
+                f"(HHI={summary.avg_concentration:.2f}, "
+                f"consistency={summary.strategy_consistency*100:.0f}%)"
+            )
+
+        if metrics_rows:
+            elements.append(mo.callout(
+                mo.md("**Strategy Classification**\n\n" + "\n\n".join(metrics_rows)),
+                kind="info",
+            ))
+
+        # Concentration timeline
+        concentration_chart = create_concentration_timeline(results, num_players, budget)
+        elements.append(concentration_chart)
+
+        # Field preferences
+        num_fields = len(next(iter(summaries.values())).field_preferences) if summaries else 0
+        if num_fields > 0:
+            pref_chart = create_field_preference_bars(summaries, num_fields)
+            elements.append(pref_chart)
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_compliance_metrics_section(
+        results: List[Dict[str, Any]],
+        num_players: int = 2
+    ) -> mo.Html:
+        """Build compliance metrics section showing parse/normalize rates.
+
+        Args:
+            results: List of round result dictionaries
+            num_players: Number of players
+
+        Returns:
+            Marimo vstack with compliance charts
+        """
+        from ..analytics.allocation import AllocationAnalyzer
+        from ..visualization.allocation_charts import create_compliance_summary_chart
+
+        analyzer = AllocationAnalyzer()
+        elements = [mo.md("### Response Compliance")]
+
+        charts = []
+        stats = []
+
+        for player_num in range(1, num_players + 1):
+            compliance = analyzer.calculate_compliance_metrics(results, player_num)
+
+            # Chart
+            chart = create_compliance_summary_chart(results, player_num)
+            charts.append(chart)
+
+            # Stats
+            model_key = f"player{player_num}_model"
+            model = results[0].get(model_key, f"Player {player_num}") if results else f"Player {player_num}"
+
+            stats.append(mo.stat(
+                label=f"P{player_num} Parse Rate",
+                value=f"{compliance.parse_rate*100:.0f}%",
+                caption=f"{model[:12]}: {compliance.parsed_ok}/{compliance.total_rounds} OK",
+            ))
+
+        if charts:
+            elements.append(mo.hstack(charts, justify="start"))
+
+        if stats:
+            elements.append(mo.hstack(stats, justify="start"))
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_strategy_evolution_section(
+        results: List[Dict[str, Any]],
+        player_num: int,
+        budget: float = 100.0
+    ) -> mo.Html:
+        """Build strategy evolution analysis section.
+
+        Args:
+            results: List of round result dictionaries
+            player_num: Player number to analyze
+            budget: Allocation budget
+
+        Returns:
+            Marimo vstack with evolution analysis
+        """
+        from ..analytics.allocation import AllocationAnalyzer
+        from ..visualization.allocation_charts import create_evolution_summary_chart
+
+        analyzer = AllocationAnalyzer()
+        evolution = analyzer.detect_strategy_evolution(results, player_num, budget)
+
+        elements = [mo.md(f"### Strategy Evolution (Player {player_num})")]
+
+        if not evolution.get("has_evolution"):
+            elements.append(mo.callout(
+                mo.md(evolution.get("explanation", "No significant evolution detected.")),
+                kind="neutral",
+            ))
+        else:
+            # Evolution chart
+            chart = create_evolution_summary_chart(evolution)
+            elements.append(chart)
+
+            # Evolution summary
+            trend = evolution.get("trend", "unknown")
+            change = evolution.get("concentration_change", 0)
+
+            trend_icons = {
+                "concentrating": "focusing resources",
+                "spreading": "diversifying resources",
+                "stable": "maintaining strategy",
+                "slight_shift": "minor adjustment",
+            }
+
+            elements.append(mo.callout(
+                mo.md(f"""
+**Trend:** {trend.title()} ({trend_icons.get(trend, '')})
+
+**First Half:** {evolution.get('first_half_strategy', 'unknown').title()} (HHI={evolution.get('first_half_concentration', 0):.2f})
+
+**Second Half:** {evolution.get('second_half_strategy', 'unknown').title()} (HHI={evolution.get('second_half_concentration', 0):.2f})
+
+**Change:** {change:+.3f} HHI
+                """),
+                kind="success" if evolution.get("strategy_shift") else "info",
+            ))
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_allocation_session_detail(
+        results: List[Dict[str, Any]],
+        num_players: int = 2,
+        budget: float = 100.0,
+        game_name: str = "Allocation Game"
+    ) -> mo.Html:
+        """Build complete session detail view for allocation games.
+
+        This is the main entry point for Burr game session analysis,
+        replacing the equilibrium-based analysis used for discrete games.
+
+        Args:
+            results: List of round result dictionaries
+            num_players: Number of players
+            budget: Allocation budget
+            game_name: Name of the game for display
+
+        Returns:
+            Marimo vstack with complete allocation analysis
+        """
+        elements = [mo.md(f"## {game_name} Analysis")]
+
+        # Main allocation analysis
+        allocation_section = AnalyticsPanelBuilder.build_allocation_analysis_section(
+            results, num_players, budget
+        )
+        elements.append(allocation_section)
+
+        # Compliance metrics
+        compliance_section = AnalyticsPanelBuilder.build_compliance_metrics_section(
+            results, num_players
+        )
+        elements.append(compliance_section)
+
+        # Evolution analysis for each player (in accordion)
+        evolution_accordions = {}
+        for player_num in range(1, num_players + 1):
+            evolution_section = AnalyticsPanelBuilder.build_strategy_evolution_section(
+                results, player_num, budget
+            )
+            model_key = f"player{player_num}_model"
+            model = results[0].get(model_key, f"Player {player_num}") if results else f"Player {player_num}"
+            evolution_accordions[f"P{player_num} Evolution ({model[:12]})"] = evolution_section
+
+        if evolution_accordions:
+            elements.append(mo.accordion(evolution_accordions))
+
+        return mo.vstack(elements)
+
+    # =====================================================================
+    # NEW ANALYSIS FEATURES
+    # =====================================================================
+
+    @staticmethod
+    def build_sensitivity_section(
+        sweep_summary: 'SweepSummary'
+    ) -> mo.Html:
+        """Build hyperparameter sensitivity analysis section.
+
+        Args:
+            sweep_summary: SweepSummary from HyperparameterSweeper
+
+        Returns:
+            Marimo vstack with sensitivity analysis
+        """
+        from ..analytics.sensitivity import HyperparameterSensitivityAnalyzer
+        from ..visualization.allocation_charts import (
+            create_compliance_by_penalty_chart,
+            create_sensitivity_heatmap,
+        )
+
+        analyzer = HyperparameterSensitivityAnalyzer(sweep_summary)
+        summary = analyzer.summarize()
+
+        elements = [mo.md("### Hyperparameter Sensitivity Analysis")]
+
+        # Parameter importance
+        importance = summary.get("parameter_importance", {})
+        if importance:
+            importance_items = []
+            for param, score in sorted(importance.items(), key=lambda x: x[1], reverse=True):
+                bar = "█" * int(score * 10) + "░" * (10 - int(score * 10))
+                importance_items.append(f"- **{param}**: [{bar}] {score:.2f}")
+
+            elements.append(mo.callout(
+                mo.md("**Parameter Importance**\n\n" + "\n".join(importance_items)),
+                kind="info",
+            ))
+
+        # Compliance by repeat_penalty
+        compliance_result = analyzer.analyze_compliance_by_repeat_penalty()
+        if compliance_result.values:
+            compliance_chart = create_compliance_by_penalty_chart(compliance_result)
+            elements.append(compliance_chart)
+
+        # Strategy variance interaction
+        variance_result = analyzer.analyze_strategy_variance()
+        if variance_result.x_values and variance_result.y_values:
+            variance_chart = create_sensitivity_heatmap(variance_result)
+            elements.append(variance_chart)
+
+        # Optimal parameters
+        opt = summary.get("optimal_balanced", {})
+        if opt.get("parameters"):
+            opt_items = [f"- {k}: {v}" for k, v in opt.get("parameters", {}).items()]
+            elements.append(mo.callout(
+                mo.md(f"**Optimal Parameters (balanced)**\n\n" +
+                      "\n".join(opt_items) +
+                      f"\n\nWin Rate: {opt.get('achieved_value', 0):.1%}"),
+                kind="success",
+            ))
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_personality_section(
+        profiler: 'ModelPersonalityProfiler',
+        model: str
+    ) -> mo.Html:
+        """Build model personality profile section.
+
+        Args:
+            profiler: ModelPersonalityProfiler instance
+            model: Model name to profile
+
+        Returns:
+            Marimo vstack with personality analysis
+        """
+        from ..visualization.allocation_charts import create_personality_comparison_chart
+
+        summary = profiler.summarize(model)
+        profile = summary.get("profile", {})
+
+        elements = [mo.md(f"### Model Personality: {model}")]
+
+        # Summary text
+        elements.append(mo.callout(mo.md(summary.get("summary", "")), kind="info"))
+
+        # Profile stats
+        stats = [
+            mo.stat(
+                label="Bias Score",
+                value=f"{profile.get('bias_score', 0):.2f}",
+                caption="-1=clustered, +1=uniform",
+            ),
+            mo.stat(
+                label="Symmetry Breaking",
+                value=f"{profile.get('symmetry_breaking_score', 0):.2f}",
+                caption="Field preference strength",
+            ),
+            mo.stat(
+                label="Consistency",
+                value=f"{profile.get('consistency_score', 0):.2f}",
+                caption="Cross-game stability",
+            ),
+            mo.stat(
+                label="Total Sessions",
+                value=str(profile.get("total_sessions", 0)),
+            ),
+        ]
+
+        elements.append(mo.hstack(stats, justify="start"))
+
+        # Game fingerprints
+        fingerprints = summary.get("game_fingerprints", {})
+        if fingerprints:
+            fp_items = []
+            for game, fp in fingerprints.items():
+                fp_items.append(
+                    f"- **{game}**: {fp.get('dominant_strategy', 'unknown').title()} "
+                    f"(HHI={fp.get('avg_concentration', 0):.2f}, {fp.get('num_rounds', 0)} rounds)"
+                )
+
+            elements.append(mo.accordion({
+                "Game-Specific Fingerprints": mo.md("\n".join(fp_items)),
+            }))
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_meta_learning_section(
+        results: List[Dict[str, Any]],
+        num_players: int = 2
+    ) -> mo.Html:
+        """Build meta-strategy learning analysis section.
+
+        Args:
+            results: List of round result dictionaries
+            num_players: Number of players
+
+        Returns:
+            Marimo vstack with meta-learning analysis
+        """
+        from ..analytics.meta_learning import MetaStrategyAnalyzer
+
+        analyzer = MetaStrategyAnalyzer(results, num_players)
+        summary = analyzer.summarize_all_players()
+
+        elements = [mo.md("### Meta-Strategy Learning Analysis")]
+
+        if not summary.get("players"):
+            elements.append(mo.callout(
+                mo.md("Insufficient data for meta-learning analysis."),
+                kind="neutral",
+            ))
+            return mo.vstack(elements)
+
+        # Player adaptation cards
+        cards = []
+        for player_num, data in summary.get("players", {}).items():
+            adaptation = data.get("adaptation", {})
+            memory = data.get("memory_effect", {})
+            learning = data.get("learning", {})
+
+            # Determine card kind
+            if adaptation.get("detected"):
+                kind = "success"
+            elif learning.get("trend") == "improving":
+                kind = "info"
+            else:
+                kind = "neutral"
+
+            card_content = mo.vstack([
+                mo.md(f"**{data.get('model', f'Player {player_num}')}**"),
+                mo.md(f"Adaptation: **{adaptation.get('type', 'none').title()}**"),
+                mo.md(f"Memory Effect: {memory.get('direction', 'none').title()} "
+                      f"(r={memory.get('correlation', 0):.2f})"),
+                mo.md(f"Learning Trend: {learning.get('trend', 'stable').title()} "
+                      f"(rate={learning.get('rate', 0):.3f})"),
+            ])
+
+            cards.append(mo.callout(card_content, kind=kind))
+
+        if cards:
+            elements.append(mo.hstack(cards, justify="start"))
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_tournament_section(
+        result: 'TournamentResult'
+    ) -> mo.Html:
+        """Build tournament results section.
+
+        Args:
+            result: TournamentResult from TournamentRunner
+
+        Returns:
+            Marimo vstack with tournament results
+        """
+        from ..visualization.allocation_charts import (
+            create_tournament_standings_chart,
+            create_matchup_matrix_heatmap,
+        )
+
+        elements = [mo.md(f"### Tournament Results: {result.tournament_id}")]
+
+        # Tournament info
+        elements.append(mo.hstack([
+            mo.stat(label="Format", value=result.config.format.title()),
+            mo.stat(label="Models", value=str(len(result.config.models))),
+            mo.stat(label="Games", value=str(len(result.config.games))),
+            mo.stat(label="Matches", value=str(len(result.match_results))),
+        ], justify="start"))
+
+        # Standings chart
+        standings_chart = create_tournament_standings_chart(result.standings)
+        elements.append(standings_chart)
+
+        # Matchup matrix
+        matchup_chart = create_matchup_matrix_heatmap(
+            result.matchup_matrix,
+            result.model_indices
+        )
+        elements.append(matchup_chart)
+
+        # Detailed standings table
+        standings_rows = [
+            {
+                "Rank": i + 1,
+                "Model": s.model,
+                "Points": s.points,
+                "W": s.wins,
+                "L": s.losses,
+                "D": s.draws,
+                "Win Rate": f"{s.win_rate:.1%}",
+            }
+            for i, s in enumerate(result.standings)
+        ]
+
+        elements.append(mo.accordion({
+            "Detailed Standings": mo.ui.table(standings_rows),
+        }))
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_ecosystem_section(
+        result: 'EcosystemResult'
+    ) -> mo.Html:
+        """Build ecosystem simulation results section.
+
+        Args:
+            result: EcosystemResult from EcosystemSimulator
+
+        Returns:
+            Marimo vstack with ecosystem analysis
+        """
+        from ..visualization.allocation_charts import (
+            create_ecosystem_timeline,
+            create_diversity_timeline,
+        )
+
+        elements = [mo.md(f"### Ecosystem Simulation: {result.simulation_id}")]
+
+        # Summary stats
+        eq = result.equilibrium_analysis
+        cycles = result.cyclical_patterns
+
+        elements.append(mo.hstack([
+            mo.stat(label="Total Rounds", value=str(result.total_rounds)),
+            mo.stat(label="Models", value=str(len(result.models))),
+            mo.stat(label="Converged", value="Yes" if eq.converged else "No"),
+            mo.stat(label="Equilibrium", value=eq.equilibrium_type.title()),
+        ], justify="start"))
+
+        # Equilibrium analysis
+        eq_kind = "success" if eq.converged else "warn" if eq.stability_score > 0.5 else "neutral"
+        elements.append(mo.callout(
+            mo.md(f"**Equilibrium Analysis**\n\n{eq.explanation}\n\n"
+                  f"Dominant Archetype: {eq.dominant_archetype.title()}\n"
+                  f"Stability Score: {eq.stability_score:.1%}"),
+            kind=eq_kind,
+        ))
+
+        # Cyclical patterns
+        if cycles.detected:
+            elements.append(mo.callout(
+                mo.md(f"**Cyclical Pattern Detected**\n\n{cycles.explanation}\n\n"
+                      f"Cycle: {' -> '.join(cycles.cycle_archetypes)}"),
+                kind="info",
+            ))
+
+        # Timeline charts
+        if result.states:
+            eco_timeline = create_ecosystem_timeline(result.states)
+            elements.append(eco_timeline)
+
+            diversity_chart = create_diversity_timeline(result.states)
+            elements.append(diversity_chart)
+
+        # Final standings
+        standings_items = []
+        sorted_standings = sorted(
+            result.final_standings.items(),
+            key=lambda x: x[1].get("win_rate", 0),
+            reverse=True
+        )
+        for model, stats in sorted_standings:
+            standings_items.append(
+                f"- **{model}**: {stats.get('win_rate', 0):.1%} win rate, "
+                f"{stats.get('total_wins', 0)} wins / {stats.get('total_games', 0)} games"
+            )
+
+        elements.append(mo.accordion({
+            "Final Standings": mo.md("\n".join(standings_items)),
+        }))
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_intelligence_leaderboard_section(
+        cross_game_analyzer: 'CrossGameComparativeAnalyzer',
+        models: Optional[List[str]] = None
+    ) -> mo.Html:
+        """Build intelligence proxy leaderboard section.
+
+        Args:
+            cross_game_analyzer: CrossGameComparativeAnalyzer instance
+            models: Optional list of models to include
+
+        Returns:
+            Marimo vstack with intelligence leaderboard
+        """
+        from ..visualization.allocation_charts import (
+            create_intelligence_leaderboard_chart,
+            create_intelligence_breakdown_chart,
+        )
+
+        leaderboard = cross_game_analyzer.create_intelligence_leaderboard(models)
+
+        elements = [mo.md("### Model Intelligence Proxy Leaderboard")]
+
+        if leaderboard.is_empty():
+            elements.append(mo.callout(
+                mo.md("No intelligence data available. Run some games first!"),
+                kind="neutral",
+            ))
+            return mo.vstack(elements)
+
+        elements.append(mo.md(
+            "_Intelligence proxy: Composite score based on compliance (25%), "
+            "efficiency (25%), adaptation (25%), and meta-awareness (25%)._"
+        ))
+
+        # Leaderboard chart
+        leaderboard_chart = create_intelligence_leaderboard_chart(leaderboard)
+        elements.append(leaderboard_chart)
+
+        # Breakdown chart
+        breakdown_chart = create_intelligence_breakdown_chart(leaderboard)
+        elements.append(breakdown_chart)
+
+        # Top 3 callout
+        top_3 = leaderboard.head(3).to_dicts()
+        if top_3:
+            medals = ["🥇", "🥈", "🥉"]
+            top_items = [
+                f"{medals[i]} **{row['model']}**: IQ={row['composite_iq']:.0f}"
+                for i, row in enumerate(top_3)
+            ]
+            elements.append(mo.callout(
+                mo.md("**Top Performers**\n\n" + "\n".join(top_items)),
+                kind="success",
+            ))
+
+        return mo.vstack(elements)
+
+    @staticmethod
+    def build_payoff_sensitivity_section(
+        summary: 'PayoffSensitivitySummary'
+    ) -> mo.Html:
+        """Build payoff function sensitivity analysis section.
+
+        Args:
+            summary: PayoffSensitivitySummary from PayoffSensitivityAnalyzer
+
+        Returns:
+            Marimo vstack with payoff sensitivity analysis
+        """
+        from ..visualization.allocation_charts import create_payoff_sensitivity_chart
+
+        elements = [mo.md(f"### Payoff Function Sensitivity: {summary.base_game}")]
+
+        elements.append(mo.hstack([
+            mo.stat(label="Variants Tested", value=str(summary.num_variants)),
+            mo.stat(label="Most Sensitive", value=summary.most_sensitive_param.title()),
+        ], justify="start"))
+
+        # Results chart
+        if summary.results:
+            chart = create_payoff_sensitivity_chart(summary.results)
+            elements.append(chart)
+
+        # Sensitivity by parameter
+        if summary.sensitivity_by_parameter:
+            sens_items = []
+            for param, score in sorted(
+                summary.sensitivity_by_parameter.items(),
+                key=lambda x: x[1],
+                reverse=True
+            ):
+                bar = "█" * int(score * 10) + "░" * (10 - int(score * 10))
+                sens_items.append(f"- **{param}**: [{bar}] {score:.2f}")
+
+            elements.append(mo.callout(
+                mo.md("**Sensitivity by Payoff Type**\n\n" + "\n".join(sens_items)),
+                kind="info",
+            ))
+
+        # Recommendations
+        if summary.recommendations:
+            elements.append(mo.accordion({
+                "Recommendations": mo.md("\n".join([f"- {r}" for r in summary.recommendations])),
+            }))
+
+        return mo.vstack(elements)
