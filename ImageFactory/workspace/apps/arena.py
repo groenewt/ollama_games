@@ -207,6 +207,7 @@ def _(mo, Path):
 @app.cell
 async def _(DEFAULT_OLLAMA_ENDPOINTS, DEFAULT_OLLAMA_MODELS, DISCOVERY_TIMEOUT, discover_all_available, mo):
     # Discover available Ollama models and endpoints at session start
+    # @TODO: GET TO DISAPPEAR :(
     mo.output.append(mo.md("_Discovering Ollama endpoints..._"))
 
     discovered_models, discovered_endpoints, endpoint_models = await discover_all_available(
