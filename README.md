@@ -64,3 +64,4 @@ brave-browser http://localhost:7241
 4. [More About Game Theory](https://ocw.mit.edu/courses/14.126-game-theory-spring-2024/mit14_126_s24_yildiz-lecture-notes.pdf)
 5. [Apache Burr Github](https://github.com/apache/burr)
 6. [Apache Burr Website](https://burr.apache.org/)
+7. [Marimo Github](https://github.com/marimo-team/marimo)
